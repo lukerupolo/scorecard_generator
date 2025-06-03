@@ -8,7 +8,7 @@ from requests.auth import HTTPBasicAuth
 
 # Onclusive API: Fetch Social Mentions Count
 def fetch_social_mentions_count(from_date, to_date, client, username, password, topic_id=None, language='en', query=None):
-    url = http://social.digimind.com/d/{client}/api/mentions
+    url = "http://social.digimind.com/d/{client}/api/mentions"
     headers = {"Accept": "application/json"}
     payload = {
         "dateRangeType": "CUSTOM",
