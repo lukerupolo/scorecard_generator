@@ -14,7 +14,7 @@ from io import BytesIO
 # API Function
 # ---------------------------------------------------------
 def fetch_social_mentions_count(from_date, to_date, username, password, language='en', query=None):
-    url = "https://api.digimind.com/v1/mentions"
+    url = "https://social.digimind.com/d/gd2/api/mentions"
     headers = {"Accept": "application/json"}
     payload = {
         "dateRangeType": "CUSTOM",
