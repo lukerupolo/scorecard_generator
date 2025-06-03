@@ -1,6 +1,6 @@
 # event_marketing_app.py
 # -------------------------------------------------------------
-# Streamlit – Event Marketing Analytics Suite (w/ Onclusive API)
+# Streamlit – Event Marketing Analytics Suite (w/ Onclusive API + .env Secure Auth)
 # -------------------------------------------------------------
 
 import streamlit as st
@@ -10,11 +10,14 @@ from datetime import datetime, timedelta
 from io import BytesIO
 import requests
 from requests.auth import HTTPBasicAuth
+from dotenv import load_dotenv
+import os
 
-# Replace with your Onclusive API credentials and client name
-ONCLUSIVE_CLIENT = "<client>"
-ONCLUSIVE_USERNAME = "<username>"
-ONCLUSIVE_PASSWORD = "<password>"
+# Load secrets from .env
+load_dotenv()
+ONCLUSIVE_CLIENT = os.getenv("ONCLUSIVE_CLIENT")
+ONCLUSIVE_USERNAME = os.getenv("ONCLUSIVE_USERNAME")
+ONCLUSIVE_PASSWORD = os.getenv("ONCLUSIVE_PASSWORD")
 
 # ---------------------------------------------------------
 # API: Fetch Social Mentions Count
