@@ -23,7 +23,6 @@ from pyngrok import ngrok, conf
 
 # 🔑 Replace this with your actual ngrok Authtoken:
 # You can find your authtoken on the ngrok dashboard after creating an account: https://dashboard.ngrok.com/get-started/your-authtoken
-!ngrok config add-authtoken 2xyaMUyxj5KM0l5tTL4evh59QfJ_7pmCiswiRKF93Hp3xGZcn # Replace with your actual token
 
 # Commented out IPython magic to ensure Python compatibility.
 # %%writefile event_marketing_app.py
