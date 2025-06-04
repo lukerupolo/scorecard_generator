@@ -1,8 +1,8 @@
 # event_marketing_app.py
 # -------------------------------------------------------------
-# Streamlit – Event Marketing Analytics Suite
-# • Onclusive (Digimind) for Social Mentions (Basic-Auth)
-# • LevelUp Analytics via Device-Code (Google SSO) → JWT
+# Streamlit – Event Marketing Analytics Suite (Modified UI)
+# • Onclusive (Digimind) for Social Mentions (Basic-Auth or manual)
+# • LevelUp Analytics via Device-Code (Google SSO) → JWT or manual
 # -------------------------------------------------------------
 
 import streamlit as st
@@ -17,10 +17,9 @@ import msal
 # ─── 1) LevelUp (AAD) CONFIGURATION ─────────────────────────
 #
 TENANT_ID = "cc74fc12-4142-400e-a653-f98bfa4b03ba"            # your AzureAD tenant
-CLIENT_ID = "009029d5-8095-4561-b513-eaa0eb10767c"         # “LevelUp” registered app’s client_id
+CLIENT_ID = "009029d5-8095-4561-b513-eaa0eb10767c"            # “LevelUp” registered app’s client_id
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"  
 SCOPE = [f"api://{CLIENT_ID}/.default"]   # must match the LevelUp API’s “default scope”
-
 
 #
 # ─── 2) Acquire LevelUp JWT via Device-Code (Google SSO) ────
@@ -126,7 +125,6 @@ def fetch_levelup_evolution_metrics(
         "regions": region,
         "id": "1748835037495",  # some unique request ID (e.g. fixed or timestamp)
         # ───────────────────────────────────────────────────────────────────────
-        # The “options[…]” block can remain exactly as LevelUp’s frontend uses it:
         "options[broadcaster]": "all",
         "options[itemsMaxNum]": "10000",
         "options[mobileFilter]": "only",
@@ -165,21 +163,25 @@ def generate_event_tables(
     events: list[dict],
     metrics: list[str],
     regions: list[str],
-    onclusive_un: str,
-    onclusive_pw: str,
+    # Onclusive inputs:
+    onclusive_user: str | None,
+    onclusive_pw: str | None,
     onclusive_lang: str,
-    onclusive_query: str,
-    levelup_jwt: str,
+    onclusive_query: str | None,
+    manual_social_inputs: dict[int, tuple[int, int]],
+    # LevelUp inputs:
+    levelup_jwt: str | None,
+    manual_levelup_inputs: dict[int, dict[str, tuple[int, int]]],
 ) -> dict[str, pd.DataFrame]:
     """
     Loops over each event:
-      • If “Social Mentions” is selected → call Digimind for baseline/actual
-      • If “Video Views (VOD)” or “Hours Watched (Streams)” is selected → call LevelUp
+      • If “Social Mentions” is selected → either use Digimind OR manual inputs
+      • If “Video Views (VOD)” or “Hours Watched (Streams)” is selected → either use LevelUp OR manual inputs
     Returns a dict of DataFrames keyed by sheet_name = f"{event_name[:25]}_{region}".
     """
     sheets: dict[str, pd.DataFrame] = {}
 
-    for ev in events:
+    for idx, ev in enumerate(events):
         baseline_col, actual_col = format_span_labels(ev["date"])
         rows = []
 
@@ -187,29 +189,37 @@ def generate_event_tables(
             baseline_val = None
             actual_val = None
 
-            # — Digimind (Onclusive) for Social Mentions —
-            if metric == "Social Mentions" and onclusive_un and onclusive_pw and onclusive_query:
-                b_from = (ev["date"] - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z")
-                b_to = (ev["date"] - timedelta(days=1)).strftime("%Y-%m-%dT23:59:59Z")
-                a_from = ev["date"].strftime("%Y-%m-%dT00:00:00Z")
-                a_to = (ev["date"] + timedelta(days=6)).strftime("%Y-%m-%dT23:59:59Z")
-
-                baseline_val = fetch_social_mentions_count(
-                    b_from, b_to, onclusive_un, onclusive_pw, onclusive_lang, onclusive_query
-                )
-                actual_val = fetch_social_mentions_count(
-                    a_from, a_to, onclusive_un, onclusive_pw, onclusive_lang, onclusive_query
-                )
-
-            # — LevelUp for Video Views / Hours Watched —
-            elif metric in ["Video Views (VOD)", "Hours Watched (Streams)"]:
-                brand_id = ev.get("brandId", "")
-                region = ev.get("region", "")
-                if brand_id and levelup_jwt:
+            # — Manual Social Mentions override —
+            if metric == "Social Mentions":
+                if idx in manual_social_inputs:
+                    baseline_val, actual_val = manual_social_inputs[idx]
+                # If not manual, attempt Onclusive API
+                elif onclusive_user and onclusive_pw and onclusive_query:
                     b_from = (ev["date"] - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z")
                     b_to = (ev["date"] - timedelta(days=1)).strftime("%Y-%m-%dT23:59:59Z")
                     a_from = ev["date"].strftime("%Y-%m-%dT00:00:00Z")
                     a_to = (ev["date"] + timedelta(days=6)).strftime("%Y-%m-%dT23:59:59Z")
+
+                    baseline_val = fetch_social_mentions_count(
+                        b_from, b_to, onclusive_user, onclusive_pw, onclusive_lang, onclusive_query
+                    )
+                    actual_val = fetch_social_mentions_count(
+                        a_from, a_to, onclusive_user, onclusive_pw, onclusive_lang, onclusive_query
+                    )
+
+            # — Manual LevelUp override —
+            elif metric in ["Video Views (VOD)", "Hours Watched (Streams)"]:
+                # Check manual inputs: manual_levelup_inputs[idx] is a dict with keys "Video Views (VOD)" or "Hours Watched (Streams)"
+                if idx in manual_levelup_inputs and metric in manual_levelup_inputs[idx]:
+                    baseline_val, actual_val = manual_levelup_inputs[idx][metric]
+                # If not manual, attempt LevelUp API
+                elif levelup_jwt:
+                    brand_id = ev.get("brandId", "")
+                    region = ev.get("region", "")
+                    b_from = (ev["date"] - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z")
+                    b_to = (ev["date"] - timedelta(days=1)).strftime("%Y-%m-%dT23:59:59Z")
+                    a_from = ev["date"].strftime("%Y-%m-%dT00:00:00Z")
+                    a_to = (ev["date"] + timedelta(days=6)).strftime("%Y-%m-%dT23:59:59:00Z")
 
                     baseline_json = fetch_levelup_evolution_metrics(
                         brand_id, b_from, b_to, region, levelup_jwt
@@ -232,6 +242,7 @@ def generate_event_tables(
                         baseline_val = extract_kpi(baseline_json, "hours_watched")
                         actual_val = extract_kpi(actual_json, "hours_watched")
 
+            # For any other metric, baseline_val/actual_val remain None (or can be extended)
             rows.append(
                 {
                     "Metric": metric,
@@ -257,140 +268,182 @@ st.markdown(
     """
 # 📊 Event Marketing Analytics Suite
 
-1. **Onclusive (Digimind)** for Social Mentions  
-2. **LevelUp (Google SSO)** for Video Views & Hours Watched  
+1. **Onclusive (Digimind)** for Social Mentions (or manual input)  
+2. **LevelUp (Google SSO)** for Video Views & Hours Watched (or manual input)  
 3. Generates an Excel workbook with one sheet per (Event × Region)
 """,
     unsafe_allow_html=True,
 )
 
-# ─ Sidebar: Onclusive (Digimind) ───────────
-st.sidebar.header("🔐 Onclusive (Digimind) Login")
-onclusive_username = st.sidebar.text_input("Onclusive Username", placeholder="you@example.com")
-onclusive_password = st.sidebar.text_input("Onclusive Password", type="password")
-onclusive_language = st.sidebar.text_input("Language", value="en")
-onclusive_query = st.sidebar.text_input("Search Keywords", placeholder="e.g. FIFA, EA Sports")
+# ─ Sidebar: Overall Configuration ───────────────────────────────────────────
+n_events = st.sidebar.number_input("Number of events", 1, 10, 1)
+events: list[dict] = []
+for i in range(n_events):
+    st.sidebar.markdown(f"**Event {i+1} Details**")
+    name = st.sidebar.text_input(f"Event Name {i+1}", key=f"name_{i}") or f"Event{i+1}"
+    date = st.sidebar.date_input(f"Event Date {i+1}", key=f"date_{i}")
+    brand_id = st.sidebar.text_input(f"LevelUp Brand ID (Event {i+1})", key=f"brand_{i}", value="3136")
+    region = st.sidebar.text_input(f"LevelUp Region (Event {i+1})", key=f"region_{i}", value="TH")
+    events.append({
+        "name": name,
+        "date": datetime.combine(date, datetime.min.time()),
+        "brandId": brand_id,
+        "region": region,
+    })
 
-if onclusive_username and onclusive_password:
-    st.sidebar.write("🔍 Testing Onclusive login…")
-    test_count = fetch_social_mentions_count(
-        "2024-01-01T00:00:00Z",
-        "2024-01-02T00:00:00Z",
-        onclusive_username,
-        onclusive_password,
-        onclusive_language,
-        "test",
-    )
-    if test_count is not None:
-        st.sidebar.success("✅ Onclusive login OK")
-    else:
-        st.sidebar.error("❌ Onclusive login failed")
-
-# ─ Sidebar: LevelUp JWT (Google SSO) ───────
-st.sidebar.header("🎮 LevelUp Login (Google SSO)")
-st.sidebar.markdown(
-    """
-Press “Generate template” → you will see a Device-Code prompt  
-(“visit https://microsoft.com/devicelogin and enter code…”)  
-Complete Google SSO, then return and the app will fetch Video Views & Hours Watched.
-"""
+metrics = st.sidebar.multiselect(
+    "Select metrics:",
+    [
+        "Sessions", "DAU", "Revenue", "Installs", "Retention", "Watch Time", "ARPU", "Conversions",
+        "Video Views (VOD)", "Hours Watched (Streams)", "Social Mentions", "Search Index", "PCCV", "AMA"
+    ],
+    default=["Social Mentions", "Video Views (VOD)", "Hours Watched (Streams)"],
 )
 
-mode = st.sidebar.radio("Mode:", ["Generate template", "Test LevelUp only"])
+regions = st.sidebar.multiselect(
+    "Output Regions (sheet tabs):",
+    ["US", "GB", "AU", "CA", "FR", "DE", "JP", "KR"],
+    default=["US", "GB"],
+)
 
-if mode == "Generate template":
-    st.sidebar.subheader("Step 1: Configure Events")
-    n_events = st.sidebar.number_input("Number of events", 1, 10, 1)
-    events: list[dict] = []
-    for i in range(n_events):
-        st.sidebar.markdown(f"**Event {i+1}**")
-        name = st.sidebar.text_input(f"Event Name {i+1}", key=f"name_{i}") or f"Event{i+1}"
-        date = st.sidebar.date_input(f"Event Date {i+1}", key=f"date_{i}")
-        brand_id = st.sidebar.text_input(f"LevelUp Brand ID (Event {i+1})", key=f"brand_{i}", value="3136")
-        region = st.sidebar.text_input(f"LevelUp Region (Event {i+1})", key=f"region_{i}", value="TH")
-        events.append({
-            "name": name,
-            "date": datetime.combine(date, datetime.min.time()),
-            "brandId": brand_id,
-            "region": region,
-        })
+# ─ Main: Conditional Login or Manual Inputs Based on Metrics ─────────────────
 
-    metrics = st.sidebar.multiselect(
-        "Select metrics:",
-        [
-            "Sessions", "DAU", "Revenue", "Installs", "Retention", "Watch Time", "ARPU", "Conversions",
-            "Video Views (VOD)", "Hours Watched (Streams)", "Social Mentions", "Search Index", "PCCV", "AMA"
-        ],
-        default=["Social Mentions", "Video Views (VOD)", "Hours Watched (Streams)"],
+# 1) Initialize variables for Onclusive (Digimind)
+onclusive_username = None
+onclusive_password = None
+onclusive_language = "en"
+onclusive_query = None
+manual_social_inputs: dict[int, tuple[int, int]] = {}
+
+if "Social Mentions" in metrics:
+    st.subheader("🔐 Onclusive (Digimind) for Social Mentions")
+    use_manual_social = st.checkbox(
+        "❔ Enter Social Mentions counts manually (skip Onclusive)",
+        key="manual_social_toggle"
     )
-    regions = st.sidebar.multiselect(
-        "Output Regions (sheet tabs):",
-        ["US", "GB", "AU", "CA", "FR", "DE", "JP", "KR"],
-        default=["US", "GB"],
-    )
+    if use_manual_social:
+        st.info("Provide baseline & actual Social Mentions per event.")
+        for idx, ev in enumerate(events):
+            baseline_input = st.number_input(
+                f"Event {idx+1} ({ev['name']}): Baseline Social Mentions",
+                min_value=0, step=1, key=f"social_baseline_{idx}"
+            )
+            actual_input = st.number_input(
+                f"Event {idx+1} ({ev['name']}): Actual Social Mentions",
+                min_value=0, step=1, key=f"social_actual_{idx}"
+            )
+            manual_social_inputs[idx] = (baseline_input, actual_input)
+    else:
+        onclusive_username = st.text_input("Onclusive Username", placeholder="you@example.com", key="onclusive_user")
+        onclusive_password = st.text_input("Onclusive Password", type="password", key="onclusive_pw")
+        onclusive_language = st.text_input("Language", value="en", key="onclusive_lang")
+        onclusive_query = st.text_input("Search Keywords", placeholder="e.g. FIFA, EA Sports", key="onclusive_query")
 
-    if st.sidebar.button("Generate template"):
-        # 1) Validate Onclusive if needed
-        if "Social Mentions" in metrics and (not onclusive_username or not onclusive_password or not onclusive_query):
-            st.warning("Enter Onclusive credentials & search keywords.")
-            st.stop()
-
-        # 2) Acquire LevelUp JWT via Device-Code Flow
-        if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
-            levelup_jwt = get_levelup_jwt()
-            if not levelup_jwt:
-                st.stop()
-        else:
-            levelup_jwt = None
-
-        with st.spinner("Building Excel…"):
-            sheets = generate_event_tables(
-                events,
-                metrics,
-                regions,
+        # Quick test for Onclusive credentials (optional)
+        if onclusive_username and onclusive_password and onclusive_query:
+            st.write("🔍 Testing Onclusive credentials…")
+            test_count = fetch_social_mentions_count(
+                "2024-01-01T00:00:00Z",
+                "2024-01-02T00:00:00Z",
                 onclusive_username,
                 onclusive_password,
                 onclusive_language,
-                onclusive_query,
-                levelup_jwt,
+                "test"
             )
-            if not sheets:
-                st.stop()
-
-            buffer = BytesIO()
-            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                for sheet_name, df in sheets.items():
-                    df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
-            buffer.seek(0)
-            st.download_button(
-                "📥 Download Event Template",
-                data=buffer,
-                file_name="event_marketing_template.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-
-elif mode == "Test LevelUp only":
-    st.header("📈 LevelUp Test: Video Views & Hours Watched")
-    st.markdown("Verify your LevelUp “Sign in with Google” + JWT fetch for a single Brand/Date/Region.")
-
-    test_brand = st.text_input("Brand ID", value="3136")
-    from_date = st.date_input("From (YYYY-MM-DD)", value=datetime.today() - timedelta(days=7))
-    to_date = st.date_input("To (YYYY-MM-DD)", value=datetime.today())
-    region_code = st.text_input("Region Code", value="TH")
-
-    if st.button("Fetch LevelUp Data"):
-        jwt = get_levelup_jwt()
-        if not jwt:
-            st.error("❌ LevelUp login failed or canceled.")
-        else:
-            b_from = f"{from_date:%Y-%m-%dT00:00:00Z}"
-            b_to = f"{to_date:%Y-%m-%dT23:59:59Z}"
-            response = fetch_levelup_evolution_metrics(test_brand, b_from, b_to, region_code, jwt)
-            arr = response.get("brandMetrics", [])
-            entry = next((x for x in arr if str(x.get("brandId")) == test_brand), None)
-            if entry:
-                st.subheader(f"Brand {test_brand} Metrics  ({from_date} → {to_date})")
-                st.write("• Video Views (VOD):", entry.get("videosViews", "N/A"))
-                st.write("• Hours Watched (Streams):", entry.get("hours_watched", "N/A"))
+            if test_count is not None:
+                st.success("✅ Onclusive login OK")
             else:
-                st.warning("No data for that Brand ID & date range.")
+                st.error("❌ Onclusive login failed")
+
+
+# 2) Initialize variables for LevelUp (Google SSO)
+levelup_jwt = None
+manual_levelup_inputs: dict[int, dict[str, tuple[int, int]]] = {}
+
+if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
+    st.subheader("🎮 LevelUp (Google SSO) for Video Views & Hours Watched")
+    use_manual_levelup = st.checkbox(
+        "❔ Enter LevelUp metrics manually (skip Google SSO)",
+        key="manual_levelup_toggle"
+    )
+    if use_manual_levelup:
+        st.info("Provide baseline & actual values for LevelUp metrics per event.")
+        for idx, ev in enumerate(events):
+            manual_levelup_inputs[idx] = {}
+            if "Video Views (VOD)" in metrics:
+                vv_baseline = st.number_input(
+                    f"Event {idx+1} ({ev['name']}): Baseline Video Views (VOD)",
+                    min_value=0, step=1, key=f"levelup_vv_baseline_{idx}"
+                )
+                vv_actual = st.number_input(
+                    f"Event {idx+1} ({ev['name']}): Actual Video Views (VOD)",
+                    min_value=0, step=1, key=f"levelup_vv_actual_{idx}"
+                )
+                manual_levelup_inputs[idx]["Video Views (VOD)"] = (vv_baseline, vv_actual)
+
+            if "Hours Watched (Streams)" in metrics:
+                hw_baseline = st.number_input(
+                    f"Event {idx+1} ({ev['name']}): Baseline Hours Watched (Streams)",
+                    min_value=0, step=1, key=f"levelup_hw_baseline_{idx}"
+                )
+                hw_actual = st.number_input(
+                    f"Event {idx+1} ({ev['name']}): Actual Hours Watched (Streams)",
+                    min_value=0, step=1, key=f"levelup_hw_actual_{idx}"
+                )
+                manual_levelup_inputs[idx]["Hours Watched (Streams)"] = (hw_baseline, hw_actual)
+    else:
+        st.markdown(
+            """
+Press “Generate template” below → you will see a Device-Code prompt  
+(“visit https://microsoft.com/devicelogin and enter code…”)  
+Complete Google SSO, then the app will fetch Video Views & Hours Watched.
+"""
+        )
+
+# ─ Generate & Download Template ───────────────────────────────────────────────
+if st.button("Generate Template"):
+    # 1) Validate Onclusive inputs if needed
+    if "Social Mentions" in metrics and not manual_social_inputs:
+        if not (onclusive_username and onclusive_password and onclusive_query):
+            st.warning("Enter Onclusive credentials or choose manual input for Social Mentions.")
+            st.stop()
+
+    # 2) Acquire LevelUp JWT via Device-Code Flow if needed
+    if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics) and not manual_levelup_inputs:
+        # Attempt SSO login if not manual
+        levelup_jwt = get_levelup_jwt()
+        if not levelup_jwt:
+            st.stop()
+
+    # 3) Build Excel sheets
+    with st.spinner("Building Excel…"):
+        sheets = generate_event_tables(
+            events,
+            metrics,
+            regions,
+            # Onclusive API inputs (None if manual)
+            onclusive_username,
+            onclusive_password,
+            onclusive_language,
+            onclusive_query,
+            manual_social_inputs,
+            # LevelUp inputs
+            levelup_jwt,
+            manual_levelup_inputs,
+        )
+        if not sheets:
+            st.stop()
+
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            for sheet_name, df in sheets.items():
+                safe_name = sheet_name[:31]  # Excel sheet name limit
+                df.to_excel(writer, sheet_name=safe_name, index=False)
+        buffer.seek(0)
+
+        st.download_button(
+            "📥 Download Event Template",
+            data=buffer,
+            file_name="event_marketing_template.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
