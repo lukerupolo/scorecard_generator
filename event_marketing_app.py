@@ -302,6 +302,27 @@ metrics = st.sidebar.multiselect(
     default=["Social Mentions", "Video Views (VOD)", "Hours Watched (Streams)"],
 )
 
+# ─ Pop‑up guidance when certain metrics are selected ───────────────────────
+if "Social Mentions" in metrics:
+    if not st.session_state.get("onclusive_msg_shown"):
+        st.toast(
+            "Social Mentions selected → scroll down to log in to Onclusive or choose manual input.",
+            icon="🔔",
+        )
+        st.session_state["onclusive_msg_shown"] = True
+else:
+    st.session_state["onclusive_msg_shown"] = False
+
+if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
+    if not st.session_state.get("levelup_msg_shown"):
+        st.toast(
+            "Video metric selected → scroll down to sign in with LevelUp or use manual entry.",
+            icon="🔔",
+        )
+        st.session_state["levelup_msg_shown"] = True
+else:
+    st.session_state["levelup_msg_shown"] = False
+
 regions = st.sidebar.multiselect(
     "Output Regions (sheet tabs):",
     ["US", "GB", "AU", "CA", "FR", "DE", "JP", "KR"],
