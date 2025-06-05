@@ -27,7 +27,7 @@ def fetch_levelup_data(
 ) -> pd.DataFrame | None:
     """
     Fetches time-series data ("videos" or "streams") from LevelUp for the given brand_id & region_code.
-    Returns a DataFrame, or None on failure.
+    Returns a DataFrame, or None on failure / empty payload.
     """
     api_url = f"https://www.levelup-analytics.com/api/client/v1/{data_type}/statsEvolution/brand/{brand_id}"
     params = {
@@ -50,6 +50,7 @@ def fetch_levelup_data(
     df["brand_id"] = brand_id
     df["country_region_code"] = region_code
 
+    # Convert columns to proper types if they exist:
     if data_type == "videos" and "views" in df.columns:
         df["views"] = df["views"].astype(int)
     elif data_type == "streams" and "watchTime" in df.columns:
@@ -60,9 +61,9 @@ def fetch_levelup_data(
 def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict[str, pd.DataFrame]:
     """
     For a single event {name, date, brandId, region}, fetch:
-      - Baseline 30 days before event
-      - Actual 30 days after event
-    Returns {"videos": DataFrame, "streams": DataFrame} (if available).
+      - Baseline (30 days before event) "videos" and "streams"
+      - Actual   (30 days after event) "videos" and "streams"
+    Returns a dict with possible keys "videos" and "streams" mapping to concatenated DataFrames.
     """
     event_date = event["date"].date()
     baseline_start = (event_date - timedelta(days=30)).strftime("%Y-%m-%d")
@@ -75,7 +76,7 @@ def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict[s
 
     metrics_dfs: dict[str, pd.DataFrame] = {}
 
-    # Fetch video views (VOD)
+    # Videos (VOD)
     vid_df_baseline = fetch_levelup_data(api_headers, brand, baseline_start, baseline_end, region, "videos")
     vid_df_actual   = fetch_levelup_data(api_headers, brand, actual_start, actual_end, region, "videos")
     if vid_df_baseline is not None and vid_df_actual is not None:
@@ -83,7 +84,7 @@ def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict[s
         vid_df_actual["period"]   = "actual"
         metrics_dfs["videos"] = pd.concat([vid_df_baseline, vid_df_actual], ignore_index=True)
 
-    # Fetch hours watched (streams)
+    # Streams (Hours Watched)
     str_df_baseline = fetch_levelup_data(api_headers, brand, baseline_start, baseline_end, region, "streams")
     str_df_actual   = fetch_levelup_data(api_headers, brand, actual_start, actual_end, region, "streams")
     if str_df_baseline is not None and str_df_actual is not None:
@@ -137,7 +138,7 @@ for i in range(n_events):
     date = st.sidebar.date_input(f"Event Date {i+1}", key=f"date_{i}")
 
     # Single-game selectbox (always "EA Sports FC 25")
-    selected_name = st.sidebar.selectbox(
+    _ = st.sidebar.selectbox(
         f"Brand (Event {i+1})",
         options=[SINGLE_BRAND_NAME],
         key=f"brand_select_{i}"
@@ -296,6 +297,7 @@ if st.button("Generate Scorecard"):
     # 3) Build a single combined DataFrame with one row per event, including all selected metrics
     combined_rows = []
     for idx, ev in enumerate(events):
+        # Start row with basic info
         row = {
             "Event": ev["name"],
             "Date": ev["date"].date(),
@@ -303,6 +305,12 @@ if st.button("Generate Scorecard"):
             "Brand ID": ev["brandId"],
             "Brand Name": SINGLE_BRAND_NAME
         }
+
+        # Prepare to fetch LevelUp metrics once if needed
+        needs_levelup = any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics)
+        ev_metrics: dict[str, pd.DataFrame] = {}
+        if needs_levelup and not (manual_levelup_inputs and idx in manual_levelup_inputs):
+            ev_metrics = generate_levelup_metrics_for_event(ev, api_headers)
 
         # ─ Social Mentions ─────────────────────────────────────────────────
         if "Social Mentions" in metrics:
@@ -340,11 +348,15 @@ if st.button("Generate Scorecard"):
             if manual_levelup_inputs and idx in manual_levelup_inputs and "Video Views (VOD)" in manual_levelup_inputs[idx]:
                 base_vv, act_vv = manual_levelup_inputs[idx]["Video Views (VOD)"]
             else:
-                ev_metrics = generate_levelup_metrics_for_event(ev, api_headers)
+                # Check if the "videos" table exists and has "views"
                 if "videos" in ev_metrics:
                     vid_df = ev_metrics["videos"]
-                    base_vv = vid_df[vid_df["period"] == "baseline"]["views"].sum()
-                    act_vv  = vid_df[vid_df["period"] == "actual"]["views"].sum()
+                    if "views" in vid_df.columns and "period" in vid_df.columns:
+                        base_vv = vid_df[vid_df["period"] == "baseline"]["views"].sum()
+                        act_vv  = vid_df[vid_df["period"] == "actual"]["views"].sum()
+                    else:
+                        base_vv = 0
+                        act_vv  = 0
                 else:
                     base_vv = 0
                     act_vv  = 0
@@ -357,11 +369,15 @@ if st.button("Generate Scorecard"):
             if manual_levelup_inputs and idx in manual_levelup_inputs and "Hours Watched (Streams)" in manual_levelup_inputs[idx]:
                 base_hw, act_hw = manual_levelup_inputs[idx]["Hours Watched (Streams)"]
             else:
-                ev_metrics = generate_levelup_metrics_for_event(ev, api_headers)
+                # Check if the "streams" table exists and has "watchTime"
                 if "streams" in ev_metrics:
                     str_df = ev_metrics["streams"]
-                    base_hw = str_df[str_df["period"] == "baseline"]["watchTime"].sum()
-                    act_hw  = str_df[str_df["period"] == "actual"]["watchTime"].sum()
+                    if "watchTime" in str_df.columns and "period" in str_df.columns:
+                        base_hw = str_df[str_df["period"] == "baseline"]["watchTime"].sum()
+                        act_hw  = str_df[str_df["period"] == "actual"]["watchTime"].sum()
+                    else:
+                        base_hw = 0
+                        act_hw  = 0
                 else:
                     base_hw = 0
                     act_hw  = 0
