@@ -16,9 +16,11 @@ import msal
 #
 # ─── 1) LevelUp (AAD) CONFIGURATION ─────────────────────────
 #
-TENANT_ID = "cc74fc12-4142-400e-a653-f98bfa4b03ba"            # your AzureAD tenant
-CLIENT_ID = "009029d5-8095-4561-b513-eaa0eb10767c"            # “LevelUp” registered app’s client_id
-AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"  
+import os
+
+TENANT_ID = os.getenv("TENANT_ID")
+CLIENT_ID = os.getenv("CLIENT_ID")
+AUTHORITY = os.getenv("AUTHORITY") or f"https://login.microsoftonline.com/{TENANT_ID}"
 SCOPE = [f"api://{CLIENT_ID}/.default"]   # must match the LevelUp API’s “default scope”
 
 #
