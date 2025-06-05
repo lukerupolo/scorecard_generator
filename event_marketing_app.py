@@ -42,9 +42,6 @@ def fetch_levelup_data(api_headers: dict, brand_id: int, start_date: str, end_da
     df["brand_id"] = brand_id
     df["country_region_code"] = region_code
 
-    # The API returns different fields depending on data_type:
-    # - For "videos", each row has a "views" field (integer).
-    # - For "streams", each row has a "watchTime" field (float or integer).
     if data_type == "videos" and "views" in df.columns:
         df["views"] = df["views"].astype(int)
     elif data_type == "streams" and "watchTime" in df.columns:
@@ -70,7 +67,6 @@ def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict:
 
     metrics_dfs = {}
 
-    # Fetch video views (VOD)
     vid_df_baseline = fetch_levelup_data(api_headers, brand, baseline_start, baseline_end, region, "videos")
     vid_df_actual   = fetch_levelup_data(api_headers, brand, actual_start, actual_end, region, "videos")
     if vid_df_baseline is not None and vid_df_actual is not None:
@@ -78,7 +74,6 @@ def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict:
         vid_df_actual["period"]   = "actual"
         metrics_dfs["videos"] = pd.concat([vid_df_baseline, vid_df_actual], ignore_index=True)
 
-    # Fetch hours watched (streams)
     str_df_baseline = fetch_levelup_data(api_headers, brand, baseline_start, baseline_end, region, "streams")
     str_df_actual   = fetch_levelup_data(api_headers, brand, actual_start, actual_end, region, "streams")
     if str_df_baseline is not None and str_df_actual is not None:
@@ -100,8 +95,18 @@ for i in range(n_events):
     st.sidebar.markdown(f"**Event {i+1} Details**")
     name = st.sidebar.text_input(f"Event Name {i+1}", key=f"name_{i}") or f"Event{i+1}"
     date = st.sidebar.date_input(f"Event Date {i+1}", key=f"date_{i}")
-    brand_id = st.sidebar.text_input(f"LevelUp Brand ID (Event {i+1})", key=f"brand_{i}", value="3136")
-    region = st.sidebar.text_input(f"LevelUp Region (Event {i+1})", key=f"region_{i}", value="TH")
+    brand_id = st.sidebar.number_input(
+        f"Brand ID (LevelUp) for Event {i+1}", 
+        min_value=1, step=1, key=f"brand_{i}"
+    )
+    # Restrict region codes to known LevelUp regions
+    region_options = ["US", "GB", "AU", "CA", "FR", "DE", "JP", "KR", "TH"]
+    region = st.sidebar.selectbox(
+        f"Region (LevelUp) for Event {i+1}", 
+        region_options, 
+        index=region_options.index("TH") if "TH" in region_options else 0, 
+        key=f"region_{i}"
+    )
     events.append({
         "name": name,
         "date": datetime.combine(date, datetime.min.time()),
@@ -168,7 +173,6 @@ if "Social Mentions" in metrics:
         onclusive_language = st.text_input("Language", value="en", key="onclusive_lang")
         onclusive_query = st.text_input("Search Keywords", placeholder="e.g. FIFA, EA Sports", key="onclusive_query")
 
-        # Optional quick test for Onclusive credentials
         if onclusive_username and onclusive_password and onclusive_query:
             st.write("🔍 Testing Onclusive credentials…")
             test_count = fetch_social_mentions_count(
@@ -225,6 +229,7 @@ if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
         levelup_api_key = st.text_input("LevelUp API Key", type="password", key="levelup_api_key")
         if levelup_api_key:
             api_headers = setup_levelup_headers(levelup_api_key)
+            st.success("🗝️ LevelUp API Key set. Ready to fetch data.")
         else:
             st.info("Enter your LevelUp API Key above or choose manual entry.")
 
@@ -317,7 +322,6 @@ if st.button("Generate Scorecard"):
             sheets["LevelUp Metrics (Manual)"] = pd.DataFrame(lv_rows)
 
         else:
-            # Use LevelUp API to fetch automatically
             all_videos = []
             all_streams = []
 
