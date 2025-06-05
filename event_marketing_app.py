@@ -61,14 +61,17 @@ def fetch_levelup_data(
 def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict[str, pd.DataFrame]:
     """
     For a single event (with keys name, date, brandId, region), fetch:
-      - Baseline (30 days before) and Actual (30 days after) for both “videos” and “streams”.
-    Returns a dict with possible keys "videos" and "streams", each mapping to the concatenated DataFrame.
+      - Baseline (7 days before) and Actual (7 days after) for both “videos” and “streams”.
+      Returns a dict with possible keys "videos" and "streams", each mapping to the concatenated DataFrame.
     """
     event_date = event["date"].date()
-    baseline_start = (event_date - timedelta(days=30)).strftime("%Y-%m-%d")
+
+    # --- NEW: 7-day windows instead of 30-day ---
+    baseline_start = (event_date - timedelta(days=7)).strftime("%Y-%m-%d")
     baseline_end   = (event_date - timedelta(days=1)).strftime("%Y-%m-%d")
     actual_start   = event_date.strftime("%Y-%m-%d")
-    actual_end     = (event_date + timedelta(days=30)).strftime("%Y-%m-%d")
+    actual_end     = (event_date + timedelta(days=6)).strftime("%Y-%m-%d")
+    # — End of NEW section —
 
     brand = int(event["brandId"])
     region = event["region"]
@@ -410,14 +413,17 @@ if st.button("✅ Generate Scorecard"):
 
     for idx, ev in enumerate(events):
         ev_date = ev["date"].date()
-        baseline_start = ev_date - timedelta(days=30)
+
+        # --- NEW: Use 7-day windows (instead of 30-day) ---
+        baseline_start = ev_date - timedelta(days=7)
         baseline_end   = ev_date - timedelta(days=1)
         actual_start   = ev_date
-        actual_end     = ev_date + timedelta(days=30)
+        actual_end     = ev_date + timedelta(days=6)
+        # — End of NEW section —
 
         baseline_label = f"Baseline  {baseline_start:%Y-%m-%d} → {baseline_end:%Y-%m-%d}"
         actual_label   = f"Actual    {actual_start:%Y-%m-%d} → {actual_end:%Y-%m-%d}"
-        avg_label      = "Baseline Method (3 months)"  # renamed column
+        avg_label      = "Baseline Method (3 months)"
 
         needs_levelup = any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics)
         fetched = {}
@@ -566,18 +572,21 @@ if st.session_state.get("scorecard_ready", False):
                 continue
             avg_actual = np.mean(actuals)
             avg_baseline_method = np.mean(baselines)
-            uplift = (
-                (avg_actual - avg_baseline_method) / avg_baseline_method * 100
-                if avg_baseline_method
-                else 0
-            )
+
+            # --- Uplift math: (Avg Actual – Avg Baseline) / Avg Baseline × 100%
+            if avg_baseline_method != 0:
+                uplift_pct = (avg_actual - avg_baseline_method) / avg_baseline_method * 100
+            else:
+                uplift_pct = 0
+
+            # Proposed Benchmark as median of the two averages
             proposed_benchmark = np.median([avg_actual, avg_baseline_method])
 
             benchmark_rows.append({
                 "Metric": metric,
                 "Avg. Actuals (Event Periods)": round(avg_actual, 2),
                 "Baseline Method": round(avg_baseline_method, 2),
-                "Baseline Uplift Expect.": f"{uplift:.2f}%",
+                "Baseline Uplift Expect.": f"{uplift_pct:.2f}%",
                 "Proposed Benchmark": round(proposed_benchmark, 2),
             })
 
@@ -595,7 +604,6 @@ if st.session_state.get("scorecard_ready", False):
 # 10) Download Excel (always present, but will include “Benchmark” sheet if generated)
 # ────────────────────────────────────────────────────────────────────────────────
 
-# We only enable download if a scorecard was generated at least once
 if st.session_state.get("scorecard_ready", False):
     sheets_dict = st.session_state["sheets_dict"]
     buffer = BytesIO()
