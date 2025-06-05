@@ -136,14 +136,13 @@ for i in range(n_events):
     name = st.sidebar.text_input(f"Event Name {i+1}", key=f"name_{i}") or f"Event{i+1}"
     date = st.sidebar.date_input(f"Event Date {i+1}", key=f"date_{i}")
 
-    # Since we only have one game, we show a selectbox with a single option:
+    # Single-game selectbox (always "EA Sports FC 25")
     selected_name = st.sidebar.selectbox(
         f"Brand (Event {i+1})",
         options=[SINGLE_BRAND_NAME],
         key=f"brand_select_{i}"
     )
-    # Under the hood, this always resolves to 3136
-    selected_id = SINGLE_BRAND_ID
+    selected_id = SINGLE_BRAND_ID  # always 3136
 
     region = st.sidebar.text_input(f"Region (Event {i+1})", key=f"region_{i}", value="TH")
 
@@ -277,7 +276,7 @@ if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
             st.success("🗝️ LevelUp API Key set. Ready to fetch data.")
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 5) Generate & Download Scorecard
+# 5) Generate & Download Scorecard (combined per-event rows)
 # ────────────────────────────────────────────────────────────────────────────────
 
 if st.button("Generate Scorecard"):
@@ -294,129 +293,100 @@ if st.button("Generate Scorecard"):
             st.stop()
         api_headers = setup_levelup_headers(levelup_api_key)
 
-    # 3) Build Excel sheets dictionary
-    sheets: dict[str, pd.DataFrame] = {}
+    # 3) Build a single combined DataFrame with one row per event, including all selected metrics
+    combined_rows = []
+    for idx, ev in enumerate(events):
+        row = {
+            "Event": ev["name"],
+            "Date": ev["date"].date(),
+            "Region": ev["region"],
+            "Brand ID": ev["brandId"],
+            "Brand Name": SINGLE_BRAND_NAME
+        }
 
-    # 3a) Social Mentions sheet
-    if "Social Mentions" in metrics:
-        social_rows = []
-        if manual_social_inputs:
-            for idx, ev in enumerate(events):
-                base, actual = manual_social_inputs[idx]
-                social_rows.append({
-                    "Event": ev["name"],
-                    "Region": ev["region"],
-                    "Brand ID": ev["brandId"],
-                    "Baseline Social Mentions": base,
-                    "Actual Social Mentions": actual
-                })
-        else:
-            for idx, ev in enumerate(events):
+        # ─ Social Mentions ─────────────────────────────────────────────────
+        if "Social Mentions" in metrics:
+            if manual_social_inputs and idx in manual_social_inputs:
+                base_sm, act_sm = manual_social_inputs[idx]
+            else:
                 event_date = ev["date"].date()
                 baseline_start = (event_date - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00Z")
                 baseline_end   = (event_date - timedelta(days=1)).strftime("%Y-%m-%dT23:59:59Z")
                 actual_start   = event_date.strftime("%Y-%m-%dT00:00:00Z")
                 actual_end     = (event_date + timedelta(days=30)).strftime("%Y-%m-%dT23:59:59Z")
 
-                baseline_count = fetch_social_mentions_count(
+                base_sm = fetch_social_mentions_count(
                     baseline_start,
                     baseline_end,
                     onclusive_username,
                     onclusive_password,
                     onclusive_language,
                     onclusive_query
-                )
-                actual_count = fetch_social_mentions_count(
+                ) or 0
+                act_sm = fetch_social_mentions_count(
                     actual_start,
                     actual_end,
                     onclusive_username,
                     onclusive_password,
                     onclusive_language,
                     onclusive_query
-                )
-                social_rows.append({
-                    "Event": ev["name"],
-                    "Region": ev["region"],
-                    "Brand ID": ev["brandId"],
-                    "Baseline Social Mentions": baseline_count or 0,
-                    "Actual Social Mentions": actual_count or 0
-                })
+                ) or 0
 
-        sheets["Social Mentions"] = pd.DataFrame(social_rows)
+            row["Baseline Social Mentions"] = base_sm
+            row["Actual Social Mentions"]   = act_sm
 
-    # 3b) LevelUp Video Views & Hours Watched sheets
-    if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
-        if manual_levelup_inputs:
-            lv_rows = []
-            for idx, ev in enumerate(events):
-                row = {
-                    "Event": ev["name"],
-                    "Region": ev["region"],
-                    "Brand ID": ev["brandId"]
-                }
-                vid_base, vid_act = manual_levelup_inputs[idx].get("Video Views (VOD)", (None, None))
-                str_base, str_act = manual_levelup_inputs[idx].get("Hours Watched (Streams)", (None, None))
-                if "Video Views (VOD)" in metrics:
-                    row["Baseline Video Views"] = vid_base
-                    row["Actual Video Views"]   = vid_act
-                if "Hours Watched (Streams)" in metrics:
-                    row["Baseline Hours Watched"] = str_base
-                    row["Actual Hours Watched"]   = str_act
-                lv_rows.append(row)
-
-            sheets["LevelUp Metrics (Manual)"] = pd.DataFrame(lv_rows)
-
-        else:
-            all_videos = []
-            all_streams = []
-
-            for ev in events:
+        # ─ Video Views (VOD) ────────────────────────────────────────────────
+        if "Video Views (VOD)" in metrics:
+            if manual_levelup_inputs and idx in manual_levelup_inputs and "Video Views (VOD)" in manual_levelup_inputs[idx]:
+                base_vv, act_vv = manual_levelup_inputs[idx]["Video Views (VOD)"]
+            else:
                 ev_metrics = generate_levelup_metrics_for_event(ev, api_headers)
-
-                if "videos" in ev_metrics and "Video Views (VOD)" in metrics:
+                if "videos" in ev_metrics:
                     vid_df = ev_metrics["videos"]
-                    base_total = vid_df[vid_df["period"] == "baseline"]["views"].sum()
-                    act_total  = vid_df[vid_df["period"] == "actual"]["views"].sum()
-                    all_videos.append({
-                        "Event": ev["name"],
-                        "Region": ev["region"],
-                        "Brand ID": ev["brandId"],
-                        "Baseline Video Views": base_total,
-                        "Actual Video Views": act_total
-                    })
+                    base_vv = vid_df[vid_df["period"] == "baseline"]["views"].sum()
+                    act_vv  = vid_df[vid_df["period"] == "actual"]["views"].sum()
+                else:
+                    base_vv = 0
+                    act_vv  = 0
 
-                if "streams" in ev_metrics and "Hours Watched (Streams)" in metrics:
+            row["Baseline Video Views"] = base_vv
+            row["Actual Video Views"]   = act_vv
+
+        # ─ Hours Watched (Streams) ───────────────────────────────────────────
+        if "Hours Watched (Streams)" in metrics:
+            if manual_levelup_inputs and idx in manual_levelup_inputs and "Hours Watched (Streams)" in manual_levelup_inputs[idx]:
+                base_hw, act_hw = manual_levelup_inputs[idx]["Hours Watched (Streams)"]
+            else:
+                ev_metrics = generate_levelup_metrics_for_event(ev, api_headers)
+                if "streams" in ev_metrics:
                     str_df = ev_metrics["streams"]
-                    base_total = str_df[str_df["period"] == "baseline"]["watchTime"].sum()
-                    act_total  = str_df[str_df["period"] == "actual"]["watchTime"].sum()
-                    all_streams.append({
-                        "Event": ev["name"],
-                        "Region": ev["region"],
-                        "Brand ID": ev["brandId"],
-                        "Baseline Hours Watched": base_total,
-                        "Actual Hours Watched": act_total
-                    })
+                    base_hw = str_df[str_df["period"] == "baseline"]["watchTime"].sum()
+                    act_hw  = str_df[str_df["period"] == "actual"]["watchTime"].sum()
+                else:
+                    base_hw = 0
+                    act_hw  = 0
 
-            if all_videos:
-                sheets["Video Views (LevelUp)"] = pd.DataFrame(all_videos)
-            if all_streams:
-                sheets["Hours Watched (LevelUp)"] = pd.DataFrame(all_streams)
+            row["Baseline Hours Watched"] = base_hw
+            row["Actual Hours Watched"]   = act_hw
 
-    if not sheets:
-        st.warning("No sheets to generate. Please select at least one metric.")
-        st.stop()
+        # ─ Other metrics placeholders ────────────────────────────────────────
+        # If you implement Sessions, DAU, etc., add them here similarly.
 
-    # 4) Write out to Excel and provide download link
+        combined_rows.append(row)
+
+    # Convert to DataFrame
+    combined_df = pd.DataFrame(combined_rows)
+
+    # 4) Write out to Excel and provide a single sheet download
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        for sheet_name, df in sheets.items():
-            safe_name = sheet_name[:31]  # 31‐character Excel limit
-            df.to_excel(writer, sheet_name=safe_name, index=False)
+        # Name this sheet "Scorecard" or whatever you like
+        combined_df.to_excel(writer, sheet_name="Scorecard", index=False)
     buffer.seek(0)
 
     st.download_button(
-        label="Download Scorecard Report",
+        label="Download Combined Scorecard",
         data=buffer,
         file_name="event_marketing_scorecard.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        mime="application/vnd.openxmlformats-officedocument-spreadsheetml.sheet"
     )
