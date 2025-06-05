@@ -53,7 +53,6 @@ def fetch_levelup_data(
     if data_type == "videos" and "views" in df.columns:
         df["views"] = df["views"].astype(int)
     elif data_type == "streams":
-        # LevelUp uses "hoursWatched" field for streams
         if "hoursWatched" in df.columns:
             df["hoursWatched"] = df["hoursWatched"].astype(float)
     return df
@@ -66,7 +65,7 @@ def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict[s
     """
     event_date = event["date"].date()
 
-    # 7-day windows instead of 30-day
+    # 7-day windows
     baseline_start = (event_date - timedelta(days=7)).strftime("%Y-%m-%d")
     baseline_end   = (event_date - timedelta(days=1)).strftime("%Y-%m-%d")
     actual_start   = event_date.strftime("%Y-%m-%d")
@@ -115,7 +114,7 @@ def compute_three_month_average(
 
     if data_type == "videos":
         column = "views"
-    else:  # data_type == "streams"
+    else:
         column = "hoursWatched" if "hoursWatched" in df.columns else None
 
     if column and column in df.columns:
@@ -123,9 +122,6 @@ def compute_three_month_average(
     return 0.0
 
 # Placeholder for fetching social mentions count.
-# If you have a function `fetch_social_mentions_count(...)`, import or define it here.
-# For now, we will default Social Mentions to zeros if the function is not present.
-
 def fetch_social_mentions_count(
     start_iso: str,
     end_iso: str,
@@ -138,7 +134,6 @@ def fetch_social_mentions_count(
     Placeholder function. Replace with your actual Onclusive API call implementation.
     Returns an integer count of social mentions between start_iso and end_iso.
     """
-    # TODO: Implement actual call to Onclusive (Digimind) here.
     return 0
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -280,23 +275,6 @@ if "Social Mentions" in metrics:
         onclusive_query = st.sidebar.text_input(
             "🔍 Search Keywords", placeholder="e.g. FIFA, EA Sports", key="onclusive_query"
         )
-
-        # Optional: Uncomment below once fetch_social_mentions_count is implemented
-        # if onclusive_username and onclusive_password and onclusive_query:
-        #     st.sidebar.write("🔍 Testing Onclusive credentials…")
-        #     test_count = fetch_social_mentions_count(
-        #         "2024-01-01T00:00:00Z",
-        #         "2024-01-02T00:00:00Z",
-        #         onclusive_username,
-        #         onclusive_password,
-        #         onclusive_language,
-        #         onclusive_query,
-        #     )
-        #     if test_count is not None:
-        #         st.sidebar.success("✅ Onclusive login OK")
-        #     else:
-        #         st.sidebar.error("❌ Onclusive login failed")
-
     st.sidebar.markdown("---")
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -363,7 +341,6 @@ if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
             st.sidebar.success("✅ LevelUp API Key set")
         else:
             st.sidebar.info("Enter your API Key to fetch data automatically.")
-
     st.sidebar.markdown("---")
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -515,7 +492,6 @@ if st.button("✅ Generate Scorecard"):
                 )
                 row[avg_label] = round(avg_hw, 2)
 
-            # — Other metrics placeholders —
             else:
                 row[baseline_label] = None
                 row[actual_label]   = None
@@ -533,7 +509,7 @@ if st.button("✅ Generate Scorecard"):
 
         sheets_dict[ev["name"][:28] or f"Event{idx+1}"] = df_event.reset_index()
 
-    # Save to session_state so we can re‐use it for Proposed Benchmark
+    # Save to session_state so we can re-use it for Proposed Benchmark
     st.session_state["sheets_dict"] = sheets_dict
     st.session_state["scorecard_ready"] = True
 
@@ -543,16 +519,15 @@ if st.button("✅ Generate Scorecard"):
 
 if st.session_state.get("scorecard_ready", False):
     if st.button("🎯 Generate Proposed Benchmark"):
-        # Retrieve the event‐tables we stored earlier
         sheets_dict = st.session_state["sheets_dict"]
 
-        # Step 1: Initialize a container for each metric's “actual” & “baseline” lists
+        # Step 1: Initialize per-metric containers
         benchmark_data = {
             m: {"actuals": [], "baselines": []}
             for m in metrics
         }
 
-        # Step 2: Populate those lists by iterating through each event‐table
+        # Step 2: Collect each event's actual & baseline
         for df in sheets_dict.values():
             if "Metric" not in df.columns:
                 continue
@@ -562,9 +537,7 @@ if st.session_state.get("scorecard_ready", False):
                 if m in df_metric.index:
                     row = df_metric.loc[m]
 
-                    # Find the 7-day “Actual” column (it starts with "Actual")
                     actual_cols = [c for c in row.index if c.startswith("Actual")]
-                    # Find the 7-day “Baseline” column (it starts with "Baseline" and contains “→”)
                     baseline_cols = [c for c in row.index if c.startswith("Baseline ") and "→" in c]
 
                     if actual_cols and baseline_cols:
@@ -574,58 +547,56 @@ if st.session_state.get("scorecard_ready", False):
                         benchmark_data[m]["actuals"].append(actual_val)
                         benchmark_data[m]["baselines"].append(baseline_val)
 
-        # Step 3: Build the final list of rows for the Proposed Benchmark table
+        # Step 3: Build the Proposed Benchmark rows
         benchmark_rows = []
         for metric, lists in benchmark_data.items():
-            actuals  = lists["actuals"]
+            actuals   = lists["actuals"]
             baselines = lists["baselines"]
 
-            # Skip metrics with missing data
+            # Skip if data is missing or mismatched
             if not actuals or not baselines or len(actuals) != len(baselines):
                 continue
 
-            # 3.1) Compute the two means (for display purposes)
+            # 3.1) Compute means (for display)
             avg_actual   = np.mean(actuals)
             avg_baseline = np.mean(baselines)
 
-            # 3.2) Compute each event-level uplift: (actual_e − baseline_e) / baseline_e × 100%
+            # 3.2) Compute each event-level uplift as (baseline_e - actual_e)/baseline_e * 100%
             event_uplifts = []
             for a, b in zip(actuals, baselines):
                 if b != 0:
-                    event_uplifts.append((a - b) / b * 100)
+                    event_uplifts.append((b - a) / b * 100)
                 else:
                     event_uplifts.append(0.0)
 
-            # 3.3) Now take the average of those per-event uplifts
+            # 3.3) Average those uplifts
             avg_uplift_pct = float(np.mean(event_uplifts))
 
-            # 3.4) Compute Proposed Benchmark = median([avg_actual, avg_baseline])
-            #      (for two values, median = (x + y) / 2)
+            # 3.4) Proposed Benchmark = median([avg_actual, avg_baseline])
             proposed_benchmark = float(np.median([avg_actual, avg_baseline]))
 
-            # 3.5) Add a row for this metric
+            # 3.5) Append the row
             benchmark_rows.append({
                 "Metric": metric,
-                "Avg. Actuals (Event Periods)":    round(avg_actual, 2),
-                "Baseline Method":                 round(avg_baseline, 2),
-                "Baseline Uplift Expect. (%)":     f"{avg_uplift_pct:.2f}%",
-                "Proposed Benchmark":              round(proposed_benchmark, 2),
+                "Avg. Actuals (Event Periods)":   round(avg_actual, 2),
+                "Baseline Method":                round(avg_baseline, 2),
+                "Baseline Uplift Expect. (%)":    f"{avg_uplift_pct:.2f}%",
+                "Proposed Benchmark":             round(proposed_benchmark, 2),
             })
 
-        # Step 4: Display and store the resulting table
+        # Step 4: Display & store
         if benchmark_rows:
             benchmark_table = pd.DataFrame(benchmark_rows)
             st.markdown("### ✨ Proposed Benchmark Table")
             st.dataframe(benchmark_table)
 
-            # Append “Benchmark” sheet so that the downloadable Excel also contains it
             sheets_dict["Benchmark"] = benchmark_table
             st.session_state["sheets_dict"] = sheets_dict
         else:
             st.info("No complete data to generate benchmark.")
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 10) Download Excel (always present, but will include “Benchmark” sheet if generated)
+# 10) Download Excel (always present, includes “Benchmark” sheet if generated)
 # ────────────────────────────────────────────────────────────────────────────────
 
 if st.session_state.get("scorecard_ready", False):
