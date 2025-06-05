@@ -299,7 +299,7 @@ metrics = st.sidebar.multiselect(
         "Sessions", "DAU", "Revenue", "Installs", "Retention", "Watch Time", "ARPU", "Conversions",
         "Video Views (VOD)", "Hours Watched (Streams)", "Social Mentions", "Search Index", "PCCV", "AMA"
     ],
-    default=["Social Mentions", "Video Views (VOD)", "Hours Watched (Streams)"],
+    default=[],
 )
 
 # Reset login decisions if metrics change
@@ -390,7 +390,7 @@ if (
 regions = st.sidebar.multiselect(
     "Output Regions (sheet tabs):",
     ["US", "GB", "AU", "CA", "FR", "DE", "JP", "KR"],
-    default=["US", "GB"],
+    default=[],
 )
 
 # ─ Main: Conditional Login or Manual Inputs Based on Metrics ─────────────────
