@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 1) Helper functions for LevelUp API integration
+# 1) Helper functions for LevelUp API integration (defensively handle keys)
 # ────────────────────────────────────────────────────────────────────────────────
 
 def setup_levelup_headers(api_key: str) -> dict:
@@ -17,21 +17,67 @@ def setup_levelup_headers(api_key: str) -> dict:
         "X-API-KEY": api_key
     }
 
+
 @st.cache_data(ttl=600)
 def fetch_all_brands(api_headers: dict) -> dict[int, str]:
     """
     Calls GET https://www.levelup-analytics.com/api/client/v1/brands
     Returns a dict mapping { brandId: brandName } for all brands your key can access.
+
+    This function is "defensive" about key names. It attempts:
+      1. item["brandId"] / item["brandName"]
+      2. item["id"] / item["name"]
+    If neither pair is found in an object, that object is skipped.
     """
     url = "https://www.levelup-analytics.com/api/client/v1/brands"
     resp = requests.get(url, headers=api_headers)
+
     if resp.status_code != 200:
         st.error(f"Error fetching brand list: HTTP {resp.status_code}")
         return {}
-    data = resp.json().get("data", [])
-    return { item["brandId"]: item["brandName"] for item in data }
 
-def fetch_levelup_data(api_headers: dict, brand_id: int, start_date: str, end_date: str, region_code: str, data_type: str):
+    payload = resp.json().get("data", [])
+    if not isinstance(payload, list):
+        st.error("`/brands` did not return a JSON list under `data`.")
+        return {}
+
+    brand_map: dict[int, str] = {}
+    for item in payload:
+        # Case A: { "brandId": 3136, "brandName": "EA Sports FC 25", … }
+        if "brandId" in item and "brandName" in item:
+            try:
+                bid = int(item["brandId"])
+                bname = str(item["brandName"])
+                brand_map[bid] = bname
+            except (ValueError, TypeError):
+                # skip if conversion fails
+                continue
+
+        # Case B: { "id": 3136, "name": "EA Sports FC 25", … }
+        elif "id" in item and "name" in item:
+            try:
+                bid = int(item["id"])
+                bname = str(item["name"])
+                brand_map[bid] = bname
+            except (ValueError, TypeError):
+                continue
+
+        else:
+            # Neither key‐pair was found. We’ll show a warning once.
+            st.warning(f"Skipping unexpected brand object (missing both brandId/brandName and id/name): {item}")
+            continue
+
+    return brand_map
+
+
+def fetch_levelup_data(
+    api_headers: dict,
+    brand_id: int,
+    start_date: str,
+    end_date: str,
+    region_code: str,
+    data_type: str
+) -> pd.DataFrame | None:
     """
     Fetches time-series data ("videos" or "streams") from LevelUp for the given brand_id & region_code.
     Returns a DataFrame, or None on failure.
@@ -64,7 +110,8 @@ def fetch_levelup_data(api_headers: dict, brand_id: int, start_date: str, end_da
 
     return df
 
-def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict:
+
+def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict[str, pd.DataFrame]:
     """
     For a single event {name, date, brandId, region}, fetch:
       - Baseline 30 days before event
@@ -80,9 +127,9 @@ def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict:
     brand = int(event["brandId"])
     region = event["region"]
 
-    metrics_dfs = {}
+    metrics_dfs: dict[str, pd.DataFrame] = {}
 
-    # Videos (VOD)
+    # Fetch video views (VOD)
     vid_df_baseline = fetch_levelup_data(api_headers, brand, baseline_start, baseline_end, region, "videos")
     vid_df_actual   = fetch_levelup_data(api_headers, brand, actual_start, actual_end, region, "videos")
     if vid_df_baseline is not None and vid_df_actual is not None:
@@ -90,7 +137,7 @@ def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict:
         vid_df_actual["period"]   = "actual"
         metrics_dfs["videos"] = pd.concat([vid_df_baseline, vid_df_actual], ignore_index=True)
 
-    # Streams (Hours Watched)
+    # Fetch hours watched (streams)
     str_df_baseline = fetch_levelup_data(api_headers, brand, baseline_start, baseline_end, region, "streams")
     str_df_actual   = fetch_levelup_data(api_headers, brand, actual_start, actual_end, region, "streams")
     if str_df_baseline is not None and str_df_actual is not None:
@@ -99,6 +146,7 @@ def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict:
         metrics_dfs["streams"] = pd.concat([str_df_baseline, str_df_actual], ignore_index=True)
 
     return metrics_dfs
+
 
 # ────────────────────────────────────────────────────────────────────────────────
 # 2) The “master” Streamlit app
@@ -109,8 +157,8 @@ st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 # —──────── Sidebar: LevelUp API Key —────────────────────────────────────────────
 st.sidebar.subheader("🔒 LevelUp Authentication")
 levelup_api_key = st.sidebar.text_input(
-    "Paste your LevelUp API Key here", 
-    type="password", 
+    "Paste your LevelUp API Key here",
+    type="password",
     key="levelup_api_key"
 )
 
@@ -130,7 +178,7 @@ brands_list = [
     2395, 2047, 611, 1330, 3135
 ]
 
-# ① Fetch the full brand dictionary from LevelUp
+# ① Fetch the full brand dictionary from LevelUp (cached for 10 minutes)
 full_brand_map = fetch_all_brands(api_headers)
 
 # ② Filter down to only the IDs in your brands_list
@@ -144,9 +192,9 @@ if not filtered_brand_map:
     st.sidebar.error("None of your specified brand IDs were found in /brands response.")
     st.stop()
 
-# Build two parallel lists for the dropdown
-brand_ids   = list(filtered_brand_map.keys())     # e.g. [3248, 3238, 2677, …]
-brand_names = [filtered_brand_map[i] for i in brand_ids]  # e.g. ["College Football 26", "EA Sports WRC", …]
+# Build two parallel lists for the dropdown:
+brand_ids   = list(filtered_brand_map.keys())             # e.g. [3248, 3238, 2677, …]
+brand_names = [filtered_brand_map[i] for i in brand_ids]  # e.g. ["College Football 26", …]
 
 # —──────── Sidebar: Event Details & Brand Name dropdown —────────────────────────
 st.sidebar.markdown("---")
@@ -159,23 +207,23 @@ for i in range(n_events):
     st.sidebar.markdown(f"**Event {i+1} Details**")
     name = st.sidebar.text_input(f"Event Name {i+1}", key=f"name_{i}") or f"Event{i+1}"
     date = st.sidebar.date_input(f"Event Date {i+1}", key=f"date_{i}")
-    
-    # ▼ NEW: Replace the old number_input for brandId with a selectbox of brand_names
+
+    # ▼ This selectbox shows friendly brand name, but we store the integer ID under the hood:
     selected_name = st.sidebar.selectbox(
         f"Brand (Event {i+1})", 
         options=brand_names, 
         key=f"brand_select_{i}"
     )
-    # Find its corresponding integer ID
+    # Lookup its corresponding integer ID
     selected_id = brand_ids[brand_names.index(selected_name)]
 
-    # Region can remain a text_input or you can restrict to known codes
+    # Region can remain a text_input (or change to selectbox if you want to limit codes)
     region = st.sidebar.text_input(f"Region (Event {i+1})", key=f"region_{i}", value="TH")
-    
+
     events.append({
         "name": name,
         "date": datetime.combine(date, datetime.min.time()),
-        "brandId": selected_id,     # integer ID used internally
+        "brandId": selected_id,   # integer ID used internally
         "region": region
     })
 
@@ -196,8 +244,7 @@ if "Social Mentions" not in metrics:
 
 # Reset manual LevelUp inputs if video metrics are deselected
 if not any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
-    for k in ["manual_levelup_toggle"]:
-        st.session_state.pop(k, None)
+    st.session_state.pop("manual_levelup_toggle", None)
 
 # —──────── Sidebar: Output Regions (sheet tabs) —────────────────────────────────
 regions = st.sidebar.multiselect(
@@ -428,7 +475,7 @@ if st.button("Generate Scorecard"):
             if all_streams:
                 sheets["Hours Watched (LevelUp)"] = pd.DataFrame(all_streams)
 
-    # 3c) (Any other metric‐sheets you want to add go here…)
+    # 3c) (Add additional metric sheets here if needed…)
 
     if not sheets:
         st.warning("No sheets to generate. Please select at least one metric.")
@@ -438,7 +485,7 @@ if st.button("Generate Scorecard"):
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         for sheet_name, df in sheets.items():
-            safe_name = sheet_name[:31]  # 31-char Excel limit
+            safe_name = sheet_name[:31]  # Excel sheet‐name limit
             df.to_excel(writer, sheet_name=safe_name, index=False)
     buffer.seek(0)
 
