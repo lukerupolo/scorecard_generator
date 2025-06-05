@@ -62,16 +62,15 @@ def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict[s
     """
     For a single event (with keys name, date, brandId, region), fetch:
       - Baseline (7 days before) and Actual (7 days after) for both “videos” and “streams”.
-      Returns a dict with possible keys "videos" and "streams", each mapping to the concatenated DataFrame.
+    Returns a dict with possible keys "videos" and "streams", each mapping to the concatenated DataFrame.
     """
     event_date = event["date"].date()
 
-    # --- NEW: 7-day windows instead of 30-day ---
+    # 7-day windows instead of 30-day
     baseline_start = (event_date - timedelta(days=7)).strftime("%Y-%m-%d")
     baseline_end   = (event_date - timedelta(days=1)).strftime("%Y-%m-%d")
     actual_start   = event_date.strftime("%Y-%m-%d")
     actual_end     = (event_date + timedelta(days=6)).strftime("%Y-%m-%d")
-    # — End of NEW section —
 
     brand = int(event["brandId"])
     region = event["region"]
@@ -414,12 +413,11 @@ if st.button("✅ Generate Scorecard"):
     for idx, ev in enumerate(events):
         ev_date = ev["date"].date()
 
-        # --- NEW: Use 7-day windows (instead of 30-day) ---
+        # Use 7-day windows
         baseline_start = ev_date - timedelta(days=7)
         baseline_end   = ev_date - timedelta(days=1)
         actual_start   = ev_date
         actual_end     = ev_date + timedelta(days=6)
-        # — End of NEW section —
 
         baseline_label = f"Baseline  {baseline_start:%Y-%m-%d} → {baseline_end:%Y-%m-%d}"
         actual_label   = f"Actual    {actual_start:%Y-%m-%d} → {actual_end:%Y-%m-%d}"
@@ -545,56 +543,82 @@ if st.button("✅ Generate Scorecard"):
 
 if st.session_state.get("scorecard_ready", False):
     if st.button("🎯 Generate Proposed Benchmark"):
+        # Retrieve the event‐tables we stored earlier
         sheets_dict = st.session_state["sheets_dict"]
 
-        # Build benchmark_data from all event tables
-        benchmark_data = {m: {"actuals": [], "baseline_methods": []} for m in metrics}
+        # Step 1: Initialize a container for each metric's “actual” & “baseline” lists
+        benchmark_data = {
+            m: {"actuals": [], "baselines": []}
+            for m in metrics
+        }
+
+        # Step 2: Populate those lists by iterating through each event‐table
         for df in sheets_dict.values():
             if "Metric" not in df.columns:
                 continue
+
             df_metric = df.set_index("Metric")
             for m in metrics:
                 if m in df_metric.index:
                     row = df_metric.loc[m]
-                    actual_col = [c for c in row.index if c.startswith("Actual")]
-                    base_method_col = [c for c in row.index if "Baseline Method" in c]
-                    if actual_col and base_method_col:
-                        actual = row[actual_col[0]]
-                        baseline_method = row[base_method_col[0]]
-                        benchmark_data[m]["actuals"].append(actual)
-                        benchmark_data[m]["baseline_methods"].append(baseline_method)
 
+                    # Find the 7-day “Actual” column (it starts with "Actual")
+                    actual_cols = [c for c in row.index if c.startswith("Actual")]
+                    # Find the 7-day “Baseline” column (it starts with "Baseline" and contains “→”)
+                    baseline_cols = [c for c in row.index if c.startswith("Baseline ") and "→" in c]
+
+                    if actual_cols and baseline_cols:
+                        actual_val   = row[actual_cols[0]]
+                        baseline_val = row[baseline_cols[0]]
+
+                        benchmark_data[m]["actuals"].append(actual_val)
+                        benchmark_data[m]["baselines"].append(baseline_val)
+
+        # Step 3: Build the final list of rows for the Proposed Benchmark table
         benchmark_rows = []
-        for metric, values in benchmark_data.items():
-            actuals = values["actuals"]
-            baselines = values["baseline_methods"]
-            if not actuals or not baselines:
+        for metric, lists in benchmark_data.items():
+            actuals  = lists["actuals"]
+            baselines = lists["baselines"]
+
+            # Skip metrics with missing data
+            if not actuals or not baselines or len(actuals) != len(baselines):
                 continue
-            avg_actual = np.mean(actuals)
-            avg_baseline_method = np.mean(baselines)
 
-            # --- Uplift math: (Avg Actual – Avg Baseline) / Avg Baseline × 100%
-            if avg_baseline_method != 0:
-                uplift_pct = (avg_actual - avg_baseline_method) / avg_baseline_method * 100
-            else:
-                uplift_pct = 0
+            # 3.1) Compute the two means (for display purposes)
+            avg_actual   = np.mean(actuals)
+            avg_baseline = np.mean(baselines)
 
-            # Proposed Benchmark as median of the two averages
-            proposed_benchmark = np.median([avg_actual, avg_baseline_method])
+            # 3.2) Compute each event-level uplift: (actual_e − baseline_e) / baseline_e × 100%
+            event_uplifts = []
+            for a, b in zip(actuals, baselines):
+                if b != 0:
+                    event_uplifts.append((a - b) / b * 100)
+                else:
+                    event_uplifts.append(0.0)
 
+            # 3.3) Now take the average of those per-event uplifts
+            avg_uplift_pct = float(np.mean(event_uplifts))
+
+            # 3.4) Compute Proposed Benchmark = median([avg_actual, avg_baseline])
+            #      (for two values, median = (x + y) / 2)
+            proposed_benchmark = float(np.median([avg_actual, avg_baseline]))
+
+            # 3.5) Add a row for this metric
             benchmark_rows.append({
                 "Metric": metric,
-                "Avg. Actuals (Event Periods)": round(avg_actual, 2),
-                "Baseline Method": round(avg_baseline_method, 2),
-                "Baseline Uplift Expect.": f"{uplift_pct:.2f}%",
-                "Proposed Benchmark": round(proposed_benchmark, 2),
+                "Avg. Actuals (Event Periods)":    round(avg_actual, 2),
+                "Baseline Method":                 round(avg_baseline, 2),
+                "Baseline Uplift Expect. (%)":     f"{avg_uplift_pct:.2f}%",
+                "Proposed Benchmark":              round(proposed_benchmark, 2),
             })
 
+        # Step 4: Display and store the resulting table
         if benchmark_rows:
             benchmark_table = pd.DataFrame(benchmark_rows)
             st.markdown("### ✨ Proposed Benchmark Table")
             st.dataframe(benchmark_table)
-            # Append the benchmark sheet to sheets_dict for Excel export
+
+            # Append “Benchmark” sheet so that the downloadable Excel also contains it
             sheets_dict["Benchmark"] = benchmark_table
             st.session_state["sheets_dict"] = sheets_dict
         else:
