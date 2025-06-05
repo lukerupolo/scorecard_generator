@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 1) Helper functions for LevelUp API integration (defensively handle keys)
+# 1) Helper functions for LevelUp API integration
 # ────────────────────────────────────────────────────────────────────────────────
 
 def setup_levelup_headers(api_key: str) -> dict:
@@ -16,59 +16,6 @@ def setup_levelup_headers(api_key: str) -> dict:
         "accept": "application/json",
         "X-API-KEY": api_key
     }
-
-
-@st.cache_data(ttl=600)
-def fetch_all_brands(api_headers: dict) -> dict[int, str]:
-    """
-    Calls GET https://www.levelup-analytics.com/api/client/v1/brands
-    Returns a dict mapping { brandId: brandName } for all brands your key can access.
-
-    This function is "defensive" about key names. It attempts:
-      1. item["brandId"] / item["brandName"]
-      2. item["id"] / item["name"]
-    If neither pair is found in an object, that object is skipped.
-    """
-    url = "https://www.levelup-analytics.com/api/client/v1/brands"
-    resp = requests.get(url, headers=api_headers)
-
-    if resp.status_code != 200:
-        st.error(f"Error fetching brand list: HTTP {resp.status_code}")
-        return {}
-
-    payload = resp.json().get("data", [])
-    if not isinstance(payload, list):
-        st.error("`/brands` did not return a JSON list under `data`.")
-        return {}
-
-    brand_map: dict[int, str] = {}
-    for item in payload:
-        # Case A: { "brandId": 3136, "brandName": "EA Sports FC 25", … }
-        if "brandId" in item and "brandName" in item:
-            try:
-                bid = int(item["brandId"])
-                bname = str(item["brandName"])
-                brand_map[bid] = bname
-            except (ValueError, TypeError):
-                # skip if conversion fails
-                continue
-
-        # Case B: { "id": 3136, "name": "EA Sports FC 25", … }
-        elif "id" in item and "name" in item:
-            try:
-                bid = int(item["id"])
-                bname = str(item["name"])
-                brand_map[bid] = bname
-            except (ValueError, TypeError):
-                continue
-
-        else:
-            # Neither key‐pair was found. We’ll show a warning once.
-            st.warning(f"Skipping unexpected brand object (missing both brandId/brandName and id/name): {item}")
-            continue
-
-    return brand_map
-
 
 def fetch_levelup_data(
     api_headers: dict,
@@ -110,7 +57,6 @@ def fetch_levelup_data(
 
     return df
 
-
 def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict[str, pd.DataFrame]:
     """
     For a single event {name, date, brandId, region}, fetch:
@@ -147,14 +93,13 @@ def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict[s
 
     return metrics_dfs
 
-
 # ────────────────────────────────────────────────────────────────────────────────
 # 2) The “master” Streamlit app
 # ────────────────────────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
-# —──────── Sidebar: LevelUp API Key —────────────────────────────────────────────
+# ───────── Sidebar: LevelUp API Key ──────────────────────────────────────────────
 st.sidebar.subheader("🔒 LevelUp Authentication")
 levelup_api_key = st.sidebar.text_input(
     "Paste your LevelUp API Key here",
@@ -163,44 +108,27 @@ levelup_api_key = st.sidebar.text_input(
 )
 
 if not levelup_api_key:
-    st.sidebar.info("Enter your LevelUp API Key to load brand names.")
+    st.sidebar.info("Enter your LevelUp API Key to proceed.")
     st.stop()
 
 api_headers = setup_levelup_headers(levelup_api_key)
 
-# —──────── Sidebar: Build Brand ID→Name mapping —────────────────────────────────
-# Your predefined list of brand IDs you care about:
-brands_list = [
-    3248, 3238, 2677, 1247, 2197, 2203, 1730,
-    3136, 3914, 1068, 2967, 106, 2406, 947,
-    1599, 1224, 950, 2, 612, 1227, 2654,
-    1142, 2561, 1326, 240, 1699, 2676, 2658,
-    2395, 2047, 611, 1330, 3135
-]
+# ───────── Sidebar: Define the single known game ─────────────────────────────────
+# We know the only valid game is "EA Sports FC 25" with brand ID = 3136
+SINGLE_BRAND_ID = 3136
+SINGLE_BRAND_NAME = "EA Sports FC 25"
 
-# ① Fetch the full brand dictionary from LevelUp (cached for 10 minutes)
-full_brand_map = fetch_all_brands(api_headers)
-
-# ② Filter down to only the IDs in your brands_list
-filtered_brand_map = {
-    bid: full_brand_map[bid]
-    for bid in brands_list
-    if bid in full_brand_map
-}
-
-if not filtered_brand_map:
-    st.sidebar.error("None of your specified brand IDs were found in /brands response.")
-    st.stop()
-
-# Build two parallel lists for the dropdown:
-brand_ids   = list(filtered_brand_map.keys())             # e.g. [3248, 3238, 2677, …]
-brand_names = [filtered_brand_map[i] for i in brand_ids]  # e.g. ["College Football 26", …]
-
-# —──────── Sidebar: Event Details & Brand Name dropdown —────────────────────────
+# ───────── Sidebar: Event Details & Single-Game Dropdown ────────────────────────
 st.sidebar.markdown("---")
 st.sidebar.header("Event Configuration")
 
-n_events = st.sidebar.number_input("Number of events", min_value=1, max_value=10, value=1, step=1)
+n_events = st.sidebar.number_input(
+    "Number of events",
+    min_value=1,
+    max_value=10,
+    value=1,
+    step=1
+)
 events: list[dict] = []
 
 for i in range(n_events):
@@ -208,26 +136,25 @@ for i in range(n_events):
     name = st.sidebar.text_input(f"Event Name {i+1}", key=f"name_{i}") or f"Event{i+1}"
     date = st.sidebar.date_input(f"Event Date {i+1}", key=f"date_{i}")
 
-    # ▼ This selectbox shows friendly brand name, but we store the integer ID under the hood:
+    # Since we only have one game, we show a selectbox with a single option:
     selected_name = st.sidebar.selectbox(
-        f"Brand (Event {i+1})", 
-        options=brand_names, 
+        f"Brand (Event {i+1})",
+        options=[SINGLE_BRAND_NAME],
         key=f"brand_select_{i}"
     )
-    # Lookup its corresponding integer ID
-    selected_id = brand_ids[brand_names.index(selected_name)]
+    # Under the hood, this always resolves to 3136
+    selected_id = SINGLE_BRAND_ID
 
-    # Region can remain a text_input (or change to selectbox if you want to limit codes)
     region = st.sidebar.text_input(f"Region (Event {i+1})", key=f"region_{i}", value="TH")
 
     events.append({
         "name": name,
         "date": datetime.combine(date, datetime.min.time()),
-        "brandId": selected_id,   # integer ID used internally
+        "brandId": selected_id,
         "region": region
     })
 
-# —──────── Sidebar: Metric selection —─────────────────────────────────────────────
+# ───────── Sidebar: Metric selection ──────────────────────────────────────────────
 metrics = st.sidebar.multiselect(
     "Select metrics to include:",
     [
@@ -246,7 +173,7 @@ if "Social Mentions" not in metrics:
 if not any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
     st.session_state.pop("manual_levelup_toggle", None)
 
-# —──────── Sidebar: Output Regions (sheet tabs) —────────────────────────────────
+# ───────── Sidebar: Output Regions (sheet tabs) ─────────────────────────────────
 regions = st.sidebar.multiselect(
     "Output Regions (sheet tabs):",
     ["US", "GB", "AU", "CA", "FR", "DE", "JP", "KR"],
@@ -475,8 +402,6 @@ if st.button("Generate Scorecard"):
             if all_streams:
                 sheets["Hours Watched (LevelUp)"] = pd.DataFrame(all_streams)
 
-    # 3c) (Add additional metric sheets here if needed…)
-
     if not sheets:
         st.warning("No sheets to generate. Please select at least one metric.")
         st.stop()
@@ -485,7 +410,7 @@ if st.button("Generate Scorecard"):
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         for sheet_name, df in sheets.items():
-            safe_name = sheet_name[:31]  # Excel sheet‐name limit
+            safe_name = sheet_name[:31]  # 31‐character Excel limit
             df.to_excel(writer, sheet_name=safe_name, index=False)
     buffer.seek(0)
 
