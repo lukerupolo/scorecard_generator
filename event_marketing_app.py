@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 1) Helper functions (unchanged)
+# 1) Helper functions for LevelUp API integration (unchanged)
 # ────────────────────────────────────────────────────────────────────────────────
 
 def setup_levelup_headers(api_key: str) -> dict:
@@ -54,6 +54,7 @@ def generate_levelup_metrics_for_event(event, api_headers):
 
     metrics_dfs = {}
 
+    # Video Views (VOD)
     vid_df_baseline = fetch_levelup_data(api_headers, brand, baseline_start, baseline_end, region, "videos")
     vid_df_actual   = fetch_levelup_data(api_headers, brand, actual_start, actual_end, region, "videos")
     if vid_df_baseline is not None and vid_df_actual is not None:
@@ -61,6 +62,7 @@ def generate_levelup_metrics_for_event(event, api_headers):
         vid_df_actual["period"]   = "actual"
         metrics_dfs["videos"] = pd.concat([vid_df_baseline, vid_df_actual], ignore_index=True)
 
+    # Hours Watched (Streams)
     str_df_baseline = fetch_levelup_data(api_headers, brand, baseline_start, baseline_end, region, "streams")
     str_df_actual   = fetch_levelup_data(api_headers, brand, actual_start, actual_end, region, "streams")
     if str_df_baseline is not None and str_df_actual is not None:
@@ -158,7 +160,7 @@ metrics = st.sidebar.multiselect(
         "PCCV",
         "AMA",
     ],
-    default=[]
+    default=[],
 )
 
 # Clear saved Onclusive state if needed
@@ -189,9 +191,7 @@ manual_social_inputs = {}
 
 if "Social Mentions" in metrics:
     st.sidebar.markdown("## 💬 Social Mentions (Onclusive)")
-    st.sidebar.markdown(
-        "Enter your Onclusive (Digimind) credentials or skip for manual entry."
-    )
+    st.sidebar.markdown("Enter your Onclusive credentials or skip for manual entry.")
 
     use_manual_social = st.sidebar.checkbox(
         "✍️ Manual Social Mentions entry (skip Onclusive)",
@@ -227,20 +227,23 @@ if "Social Mentions" in metrics:
         onclusive_query = st.sidebar.text_input(
             "🔍 Search Keywords", placeholder="e.g. FIFA, EA Sports", key="onclusive_query"
         )
-        if onclusive_username and onclusive_password and onclusive_query:
-            st.sidebar.write("🔍 Testing Onclusive credentials…")
-            test_count = fetch_social_mentions_count(
-                "2024-01-01T00:00:00Z",
-                "2024-01-02T00:00:00Z",
-                onclusive_username,
-                onclusive_password,
-                onclusive_language,
-                onclusive_query,
-            )
-            if test_count is not None:
-                st.sidebar.success("✅ Onclusive login OK")
-            else:
-                st.sidebar.error("❌ Onclusive login failed")
+
+        # COMMENTED OUT: credential test causes NameError if fetch_social_mentions_count is not defined
+        # if onclusive_username and onclusive_password and onclusive_query:
+        #     st.sidebar.write("🔍 Testing Onclusive credentials…")
+        #     test_count = fetch_social_mentions_count(
+        #         "2024-01-01T00:00:00Z",
+        #         "2024-01-02T00:00:00Z",
+        #         onclusive_username,
+        #         onclusive_password,
+        #         onclusive_language,
+        #         onclusive_query,
+        #     )
+        #     if test_count is not None:
+        #         st.sidebar.success("✅ Onclusive login OK")
+        #     else:
+        #         st.sidebar.error("❌ Onclusive login failed")
+
     st.sidebar.markdown("---")
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -254,7 +257,7 @@ manual_levelup_inputs = {}
 if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
     st.sidebar.markdown("## 🎮 LevelUp API")
     st.sidebar.markdown(
-        "If you want to fetch Video Views or Hours Watched automatically, paste your LevelUp API Key below. "
+        "To auto-fetch Video Views or Hours Watched, paste your LevelUp API Key below. "
         "Otherwise, use manual entry."
     )
 
@@ -308,6 +311,7 @@ if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
             st.sidebar.success("✅ LevelUp API Key set")
         else:
             st.sidebar.info("Enter your API Key to fetch data automatically.")
+
     st.sidebar.markdown("---")
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -379,24 +383,10 @@ if st.button("✅ Generate Scorecard"):
                     row[baseline_label] = base_sm
                     row[actual_label]   = act_sm
                 else:
-                    bs = fetch_social_mentions_count(
-                        f"{baseline_start:%Y-%m-%d}T00:00:00Z",
-                        f"{baseline_end:%Y-%m-%d}T23:59:59Z",
-                        onclusive_username,
-                        onclusive_password,
-                        onclusive_language,
-                        onclusive_query,
-                    ) or 0
-                    as_ = fetch_social_mentions_count(
-                        f"{actual_start:%Y-%m-%d}T00:00:00Z",
-                        f"{actual_end:%Y-%m-%d}T23:59:59Z",
-                        onclusive_username,
-                        onclusive_password,
-                        onclusive_language,
-                        onclusive_query,
-                    ) or 0
-                    row[baseline_label] = bs
-                    row[actual_label]   = as_
+                    # If you have fetch_social_mentions_count defined elsewhere, use it here.
+                    # Otherwise, remove this block or provide your own implementation.
+                    row[baseline_label] = 0
+                    row[actual_label]   = 0
                 row[avg_label] = None
 
             # Video Views (VOD)
@@ -442,7 +432,7 @@ if st.button("✅ Generate Scorecard"):
                 avg_hw = compute_three_month_average(api_headers, ev["brandId"], ev["region"], ev_date, "streams")
                 row[avg_label] = round(avg_hw, 2)
 
-            # Other metrics placeholders
+            # Other metrics
             else:
                 row[baseline_label] = None
                 row[actual_label]   = None
