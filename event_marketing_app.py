@@ -1,20 +1,35 @@
 import streamlit as st
 import requests
 import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
 from io import BytesIO
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 1) Helper functions for LevelUp API integration (unchanged)
+# 1) Helper functions for LevelUp API integration and Social Mentions (Onclusive)
 # ────────────────────────────────────────────────────────────────────────────────
 
 def setup_levelup_headers(api_key: str) -> dict:
+    """
+    Constructs HTTP headers for LevelUp API requests using the provided API key.
+    """
     return {
         "accept": "application/json",
         "X-API-KEY": api_key
     }
 
-def fetch_levelup_data(api_headers, brand_id, start_date, end_date, region_code, data_type):
+def fetch_levelup_data(
+    api_headers: dict,
+    brand_id: int,
+    start_date: str,
+    end_date: str,
+    region_code: str,
+    data_type: str
+) -> pd.DataFrame | None:
+    """
+    Fetches time-series data ("videos" or "streams") from LevelUp for the given brand_id & region_code.
+    Dates should be "YYYY-MM-DD" strings. Returns a DataFrame or None if no data / error.
+    """
     api_url = f"https://www.levelup-analytics.com/api/client/v1/{data_type}/statsEvolution/brand/{brand_id}"
     params = {
         "from": start_date,
@@ -38,11 +53,17 @@ def fetch_levelup_data(api_headers, brand_id, start_date, end_date, region_code,
     if data_type == "videos" and "views" in df.columns:
         df["views"] = df["views"].astype(int)
     elif data_type == "streams":
+        # LevelUp uses "hoursWatched" field for streams
         if "hoursWatched" in df.columns:
             df["hoursWatched"] = df["hoursWatched"].astype(float)
     return df
 
-def generate_levelup_metrics_for_event(event, api_headers):
+def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict[str, pd.DataFrame]:
+    """
+    For a single event (with keys name, date, brandId, region), fetch:
+      - Baseline (30 days before) and Actual (30 days after) for both “videos” and “streams”.
+    Returns a dict with possible keys "videos" and "streams", each mapping to the concatenated DataFrame.
+    """
     event_date = event["date"].date()
     baseline_start = (event_date - timedelta(days=30)).strftime("%Y-%m-%d")
     baseline_end   = (event_date - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -52,7 +73,7 @@ def generate_levelup_metrics_for_event(event, api_headers):
     brand = int(event["brandId"])
     region = event["region"]
 
-    metrics_dfs = {}
+    metrics_dfs: dict[str, pd.DataFrame] = {}
 
     # Video Views (VOD)
     vid_df_baseline = fetch_levelup_data(api_headers, brand, baseline_start, baseline_end, region, "videos")
@@ -72,7 +93,18 @@ def generate_levelup_metrics_for_event(event, api_headers):
 
     return metrics_dfs
 
-def compute_three_month_average(api_headers, brand_id, region, event_date, data_type):
+def compute_three_month_average(
+    api_headers: dict,
+    brand_id: int,
+    region: str,
+    event_date: datetime.date,
+    data_type: str
+) -> float:
+    """
+    Compute the average daily metric (views or hoursWatched) for 90 days prior to event_date.
+    data_type: "videos" → use "views"; "streams" → use "hoursWatched".
+    Returns 0 if no data.
+    """
     end_date = (event_date - timedelta(days=1)).strftime("%Y-%m-%d")
     start_date = (event_date - timedelta(days=90)).strftime("%Y-%m-%d")
     df = fetch_levelup_data(api_headers, brand_id, start_date, end_date, region, data_type)
@@ -81,15 +113,34 @@ def compute_three_month_average(api_headers, brand_id, region, event_date, data_
 
     if data_type == "videos":
         column = "views"
-    else:
+    else:  # data_type == "streams"
         column = "hoursWatched" if "hoursWatched" in df.columns else None
 
     if column and column in df.columns:
         return df[column].mean()
     return 0.0
 
+# Placeholder for fetching social mentions count.
+# If you have a function `fetch_social_mentions_count(...)`, import or define it here.
+# For now, we will default Social Mentions to zeros if the function is not present.
+
+def fetch_social_mentions_count(
+    start_iso: str,
+    end_iso: str,
+    username: str,
+    password: str,
+    language: str,
+    query: str
+) -> int:
+    """
+    Placeholder function. Replace with your actual Onclusive API call implementation.
+    Returns an integer count of social mentions between start_iso and end_iso.
+    """
+    # TODO: Implement actual call to Onclusive (Digimind) here.
+    return 0
+
 # ────────────────────────────────────────────────────────────────────────────────
-# 2) Streamlit page configuration
+# 2) Streamlit app configuration and sidebar with emojis
 # ────────────────────────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
@@ -108,7 +159,7 @@ n_events = st.sidebar.number_input(
     "Number of events", min_value=1, max_value=10, value=1, step=1
 )
 
-events = []
+events: list[dict] = []
 for i in range(n_events):
     st.sidebar.markdown(f"### Event {i+1}")
     name = st.sidebar.text_input(
@@ -163,7 +214,7 @@ metrics = st.sidebar.multiselect(
     default=[],
 )
 
-# Clear saved Onclusive state if needed
+# Clear saved Onclusive state if Social Mentions is deselected
 if "Social Mentions" not in metrics:
     for k in [
         "manual_social_toggle",
@@ -173,7 +224,7 @@ if "Social Mentions" not in metrics:
     ]:
         st.session_state.pop(k, None)
 
-# Clear saved LevelUp state if needed
+# Clear saved LevelUp state if no Video/Streams metrics are selected
 if not any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
     st.session_state.pop("manual_levelup_toggle", None)
 
@@ -187,7 +238,7 @@ onclusive_username = None
 onclusive_password = None
 onclusive_language = "en"
 onclusive_query = None
-manual_social_inputs = {}
+manual_social_inputs: dict[int, tuple[int, int]] = {}
 
 if "Social Mentions" in metrics:
     st.sidebar.markdown("## 💬 Social Mentions (Onclusive)")
@@ -228,7 +279,7 @@ if "Social Mentions" in metrics:
             "🔍 Search Keywords", placeholder="e.g. FIFA, EA Sports", key="onclusive_query"
         )
 
-        # COMMENTED OUT: credential test causes NameError if fetch_social_mentions_count is not defined
+        # Optional: Uncomment below once fetch_social_mentions_count is implemented
         # if onclusive_username and onclusive_password and onclusive_query:
         #     st.sidebar.write("🔍 Testing Onclusive credentials…")
         #     test_count = fetch_social_mentions_count(
@@ -252,7 +303,7 @@ if "Social Mentions" in metrics:
 
 levelup_api_key = None
 api_headers = None
-manual_levelup_inputs = {}
+manual_levelup_inputs: dict[int, dict[str, tuple[int, int]]] = {}
 
 if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
     st.sidebar.markdown("## 🎮 LevelUp API")
@@ -270,6 +321,7 @@ if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
     if use_manual_levelup:
         st.sidebar.info("Provide baseline & actual values for each event.")
         for idx, ev in enumerate(events):
+            manual_levelup_inputs[idx] = {}
             if "Video Views (VOD)" in metrics:
                 vv_base = st.sidebar.number_input(
                     f"Event {idx+1} ({ev['name']}): Baseline Video Views (VOD)",
@@ -283,7 +335,6 @@ if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
                     step=1,
                     key=f"levelup_vv_actual_{idx}",
                 )
-                manual_levelup_inputs[idx] = manual_levelup_inputs.get(idx, {})
                 manual_levelup_inputs[idx]["Video Views (VOD)"] = (vv_base, vv_act)
 
             if "Hours Watched (Streams)" in metrics:
@@ -299,7 +350,6 @@ if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
                     step=1,
                     key=f"levelup_hw_actual_{idx}",
                 )
-                manual_levelup_inputs[idx] = manual_levelup_inputs.get(idx, {})
                 manual_levelup_inputs[idx]["Hours Watched (Streams)"] = (hw_base, hw_act)
 
     else:
@@ -328,7 +378,7 @@ regions = st.sidebar.multiselect(
 st.sidebar.markdown("---")
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 8) Main: Generate Scorecard
+# 8) Main: Generate Scorecard, Proposed Benchmark, and Download Excel
 # ────────────────────────────────────────────────────────────────────────────────
 
 if st.button("✅ Generate Scorecard"):
@@ -349,8 +399,9 @@ if st.button("✅ Generate Scorecard"):
         if levelup_api_key:
             api_headers = setup_levelup_headers(levelup_api_key)
 
-    # 8.2 Build and display one table per event
-    sheets_dict = {}
+    # 8.2 Build and display one table per event, collect into sheets_dict
+    sheets_dict: dict[str, pd.DataFrame] = {}
+
     for idx, ev in enumerate(events):
         ev_date = ev["date"].date()
         baseline_start = ev_date - timedelta(days=30)
@@ -360,14 +411,14 @@ if st.button("✅ Generate Scorecard"):
 
         baseline_label = f"Baseline  {baseline_start:%Y-%m-%d} → {baseline_end:%Y-%m-%d}"
         actual_label   = f"Actual    {actual_start:%Y-%m-%d} → {actual_end:%Y-%m-%d}"
-        avg_label      = "Baseline Method (3 months)"
+        avg_label      = "Baseline Method (3 months)"  # renamed column
 
         needs_levelup = any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics)
         fetched = {}
         if needs_levelup and not (manual_levelup_inputs and idx in manual_levelup_inputs):
             fetched = generate_levelup_metrics_for_event(ev, api_headers)
 
-        rows_for_event = []
+        rows_for_event: list[dict[str, object]] = []
         for metric_name in metrics:
             row = {
                 "Metric": metric_name,
@@ -376,20 +427,34 @@ if st.button("✅ Generate Scorecard"):
                 avg_label: None,
             }
 
-            # Social Mentions
+            # — Social Mentions —
             if metric_name == "Social Mentions":
                 if idx in manual_social_inputs:
                     base_sm, act_sm = manual_social_inputs[idx]
                     row[baseline_label] = base_sm
                     row[actual_label]   = act_sm
                 else:
-                    # If you have fetch_social_mentions_count defined elsewhere, use it here.
-                    # Otherwise, remove this block or provide your own implementation.
-                    row[baseline_label] = 0
-                    row[actual_label]   = 0
+                    bs = fetch_social_mentions_count(
+                        f"{baseline_start:%Y-%m-%d}T00:00:00Z",
+                        f"{baseline_end:%Y-%m-%d}T23:59:59Z",
+                        onclusive_username,
+                        onclusive_password,
+                        onclusive_language,
+                        onclusive_query,
+                    ) or 0
+                    as_ = fetch_social_mentions_count(
+                        f"{actual_start:%Y-%m-%d}T00:00:00Z",
+                        f"{actual_end:%Y-%m-%d}T23:59:59Z",
+                        onclusive_username,
+                        onclusive_password,
+                        onclusive_language,
+                        onclusive_query,
+                    ) or 0
+                    row[baseline_label] = bs
+                    row[actual_label]   = as_
                 row[avg_label] = None
 
-            # Video Views (VOD)
+            # — Video Views (VOD) —
             elif metric_name == "Video Views (VOD)":
                 if idx in manual_levelup_inputs and "Video Views (VOD)" in manual_levelup_inputs[idx]:
                     base_vv, act_vv = manual_levelup_inputs[idx]["Video Views (VOD)"]
@@ -397,7 +462,11 @@ if st.button("✅ Generate Scorecard"):
                     row[actual_label]   = act_vv
                 else:
                     vid_df = fetched.get("videos", pd.DataFrame())
-                    if not vid_df.empty and "period" in vid_df.columns and "views" in vid_df.columns:
+                    if (
+                        not vid_df.empty
+                        and "period" in vid_df.columns
+                        and "views" in vid_df.columns
+                    ):
                         bv = vid_df[vid_df["period"] == "baseline"]["views"].sum()
                         av = vid_df[vid_df["period"] == "actual"]["views"].sum()
                     else:
@@ -405,10 +474,12 @@ if st.button("✅ Generate Scorecard"):
                     row[baseline_label] = bv
                     row[actual_label]   = av
 
-                avg_vv = compute_three_month_average(api_headers, ev["brandId"], ev["region"], ev_date, "videos")
+                avg_vv = compute_three_month_average(
+                    api_headers, ev["brandId"], ev["region"], ev_date, "videos"
+                )
                 row[avg_label] = round(avg_vv, 2)
 
-            # Hours Watched (Streams)
+            # — Hours Watched (Streams) —
             elif metric_name == "Hours Watched (Streams)":
                 if idx in manual_levelup_inputs and "Hours Watched (Streams)" in manual_levelup_inputs[idx]:
                     base_hw, act_hw = manual_levelup_inputs[idx]["Hours Watched (Streams)"]
@@ -429,10 +500,12 @@ if st.button("✅ Generate Scorecard"):
                     row[baseline_label] = bh
                     row[actual_label]   = ah
 
-                avg_hw = compute_three_month_average(api_headers, ev["brandId"], ev["region"], ev_date, "streams")
+                avg_hw = compute_three_month_average(
+                    api_headers, ev["brandId"], ev["region"], ev_date, "streams"
+                )
                 row[avg_label] = round(avg_hw, 2)
 
-            # Other metrics
+            # — Other metrics placeholders —
             else:
                 row[baseline_label] = None
                 row[actual_label]   = None
@@ -450,12 +523,68 @@ if st.button("✅ Generate Scorecard"):
 
         sheets_dict[ev["name"][:28] or f"Event{idx+1}"] = df_event.reset_index()
 
-    # Write all event‐tables to Excel
+    # ────────────────────────────────────────────────────────────────────────────────
+    # 8.3) Button: Generate Proposed Benchmark
+    # ────────────────────────────────────────────────────────────────────────────────
+
+    if st.button("🎯 Generate Proposed Benchmark"):
+        benchmark_data = {m: {"actuals": [], "baseline_methods": []} for m in metrics}
+
+        for df in sheets_dict.values():
+            if "Metric" not in df.columns:
+                continue
+            df_metric = df.set_index("Metric")
+            for m in metrics:
+                if m in df_metric.index:
+                    row = df_metric.loc[m]
+                    actual_col = [c for c in row.index if c.startswith("Actual")]
+                    base_method_col = [c for c in row.index if "Baseline Method" in c]
+                    if actual_col and base_method_col:
+                        actual = row[actual_col[0]]
+                        baseline_method = row[base_method_col[0]]
+                        benchmark_data[m]["actuals"].append(actual)
+                        benchmark_data[m]["baseline_methods"].append(baseline_method)
+
+        benchmark_rows = []
+        for metric, values in benchmark_data.items():
+            actuals = values["actuals"]
+            baselines = values["baseline_methods"]
+            if not actuals or not baselines:
+                continue
+            avg_actual = np.mean(actuals)
+            avg_baseline_method = np.mean(baselines)
+            uplift = (
+                (avg_actual - avg_baseline_method) / avg_baseline_method * 100
+                if avg_baseline_method
+                else 0
+            )
+            proposed_benchmark = np.median([avg_actual, avg_baseline_method])
+
+            benchmark_rows.append({
+                "Metric": metric,
+                "Avg. Actuals (Event Periods)": round(avg_actual, 2),
+                "Baseline Method": round(avg_baseline_method, 2),
+                "Baseline Uplift Expect.": f"{uplift:.2f}%",
+                "Proposed Benchmark": round(proposed_benchmark, 2),
+            })
+
+        if benchmark_rows:
+            benchmark_table = pd.DataFrame(benchmark_rows)
+            st.markdown("### ✨ Proposed Benchmark Table")
+            st.dataframe(benchmark_table)
+            sheets_dict["Benchmark"] = benchmark_table
+        else:
+            st.info("No complete data to generate benchmark.")
+
+    # ────────────────────────────────────────────────────────────────────────────────
+    # 8.4) Excel export (includes “Benchmark” sheet if generated)
+    # ────────────────────────────────────────────────────────────────────────────────
+
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        for sheet_name, df_event in sheets_dict.items():
+        for sheet_name, df_sheet in sheets_dict.items():
             safe_name = sheet_name[:31]
-            df_event.to_excel(writer, sheet_name=safe_name, index=False)
+            df_sheet.to_excel(writer, sheet_name=safe_name, index=False)
     buffer.seek(0)
 
     st.download_button(
