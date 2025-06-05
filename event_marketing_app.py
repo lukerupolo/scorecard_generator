@@ -377,8 +377,14 @@ regions = st.sidebar.multiselect(
 )
 st.sidebar.markdown("---")
 
+# Initialize session_state flags (only once)
+if "scorecard_ready" not in st.session_state:
+    st.session_state["scorecard_ready"] = False
+if "sheets_dict" not in st.session_state:
+    st.session_state["sheets_dict"] = {}
+
 # ────────────────────────────────────────────────────────────────────────────────
-# 8) Main: Generate Scorecard, Proposed Benchmark, and Download Excel
+# 8) Main: Generate Scorecard
 # ────────────────────────────────────────────────────────────────────────────────
 
 if st.button("✅ Generate Scorecard"):
@@ -523,13 +529,20 @@ if st.button("✅ Generate Scorecard"):
 
         sheets_dict[ev["name"][:28] or f"Event{idx+1}"] = df_event.reset_index()
 
-    # ────────────────────────────────────────────────────────────────────────────────
-    # 8.3) Button: Generate Proposed Benchmark
-    # ────────────────────────────────────────────────────────────────────────────────
+    # Save to session_state so we can re‐use it for Proposed Benchmark
+    st.session_state["sheets_dict"] = sheets_dict
+    st.session_state["scorecard_ready"] = True
 
+# ────────────────────────────────────────────────────────────────────────────────
+# 9) If scorecard was generated, show the “Generate Proposed Benchmark” button
+# ────────────────────────────────────────────────────────────────────────────────
+
+if st.session_state.get("scorecard_ready", False):
     if st.button("🎯 Generate Proposed Benchmark"):
-        benchmark_data = {m: {"actuals": [], "baseline_methods": []} for m in metrics}
+        sheets_dict = st.session_state["sheets_dict"]
 
+        # Build benchmark_data from all event tables
+        benchmark_data = {m: {"actuals": [], "baseline_methods": []} for m in metrics}
         for df in sheets_dict.values():
             if "Metric" not in df.columns:
                 continue
@@ -572,14 +585,19 @@ if st.button("✅ Generate Scorecard"):
             benchmark_table = pd.DataFrame(benchmark_rows)
             st.markdown("### ✨ Proposed Benchmark Table")
             st.dataframe(benchmark_table)
+            # Append the benchmark sheet to sheets_dict for Excel export
             sheets_dict["Benchmark"] = benchmark_table
+            st.session_state["sheets_dict"] = sheets_dict
         else:
             st.info("No complete data to generate benchmark.")
 
-    # ────────────────────────────────────────────────────────────────────────────────
-    # 8.4) Excel export (includes “Benchmark” sheet if generated)
-    # ────────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────────
+# 10) Download Excel (always present, but will include “Benchmark” sheet if generated)
+# ────────────────────────────────────────────────────────────────────────────────
 
+# We only enable download if a scorecard was generated at least once
+if st.session_state.get("scorecard_ready", False):
+    sheets_dict = st.session_state["sheets_dict"]
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         for sheet_name, df_sheet in sheets_dict.items():
