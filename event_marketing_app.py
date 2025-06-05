@@ -4,7 +4,9 @@ import pandas as pd
 from datetime import datetime, timedelta
 from io import BytesIO
 
-# ─ Helper Functions for LevelUp API Integration ─────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────────
+# 1) Helper functions for LevelUp API integration
+# ────────────────────────────────────────────────────────────────────────────────
 
 def setup_levelup_headers(api_key: str) -> dict:
     """
@@ -15,11 +17,24 @@ def setup_levelup_headers(api_key: str) -> dict:
         "X-API-KEY": api_key
     }
 
+@st.cache_data(ttl=600)
+def fetch_all_brands(api_headers: dict) -> dict[int, str]:
+    """
+    Calls GET https://www.levelup-analytics.com/api/client/v1/brands
+    Returns a dict mapping { brandId: brandName } for all brands your key can access.
+    """
+    url = "https://www.levelup-analytics.com/api/client/v1/brands"
+    resp = requests.get(url, headers=api_headers)
+    if resp.status_code != 200:
+        st.error(f"Error fetching brand list: HTTP {resp.status_code}")
+        return {}
+    data = resp.json().get("data", [])
+    return { item["brandId"]: item["brandName"] for item in data }
+
 def fetch_levelup_data(api_headers: dict, brand_id: int, start_date: str, end_date: str, region_code: str, data_type: str):
     """
-    Fetches time-series data ("videos" or "streams") for a specific brand and region
-    from LevelUp between start_date and end_date (ISO "YYYY-MM-DD" format).
-    Returns a pandas DataFrame with columns for date, metric (views or watchTime), brand_id, and region.
+    Fetches time-series data ("videos" or "streams") from LevelUp for the given brand_id & region_code.
+    Returns a DataFrame, or None on failure.
     """
     api_url = f"https://www.levelup-analytics.com/api/client/v1/{data_type}/statsEvolution/brand/{brand_id}"
     params = {
@@ -51,10 +66,10 @@ def fetch_levelup_data(api_headers: dict, brand_id: int, start_date: str, end_da
 
 def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict:
     """
-    For a single event (dict with "name", "date", "brandId", "region"), fetch:
-      - Baseline (30 days before event date up to day before event) data
-      - Actual   (event date up to 30 days after event) data
-    Returns a dict with DataFrames for "videos" and "streams" if requested.
+    For a single event {name, date, brandId, region}, fetch:
+      - Baseline 30 days before event
+      - Actual 30 days after event
+    Returns {"videos": DataFrame, "streams": DataFrame} (if available).
     """
     event_date = event["date"].date()
     baseline_start = (event_date - timedelta(days=30)).strftime("%Y-%m-%d")
@@ -67,6 +82,7 @@ def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict:
 
     metrics_dfs = {}
 
+    # Videos (VOD)
     vid_df_baseline = fetch_levelup_data(api_headers, brand, baseline_start, baseline_end, region, "videos")
     vid_df_actual   = fetch_levelup_data(api_headers, brand, actual_start, actual_end, region, "videos")
     if vid_df_baseline is not None and vid_df_actual is not None:
@@ -74,6 +90,7 @@ def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict:
         vid_df_actual["period"]   = "actual"
         metrics_dfs["videos"] = pd.concat([vid_df_baseline, vid_df_actual], ignore_index=True)
 
+    # Streams (Hours Watched)
     str_df_baseline = fetch_levelup_data(api_headers, brand, baseline_start, baseline_end, region, "streams")
     str_df_actual   = fetch_levelup_data(api_headers, brand, actual_start, actual_end, region, "streams")
     if str_df_baseline is not None and str_df_actual is not None:
@@ -83,37 +100,86 @@ def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict:
 
     return metrics_dfs
 
-# ─ Streamlit App ───────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────────
+# 2) The “master” Streamlit app
+# ────────────────────────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
-# ─ Sidebar: Overall Configuration ───────────────────────────────────────────
+# —──────── Sidebar: LevelUp API Key —────────────────────────────────────────────
+st.sidebar.subheader("🔒 LevelUp Authentication")
+levelup_api_key = st.sidebar.text_input(
+    "Paste your LevelUp API Key here", 
+    type="password", 
+    key="levelup_api_key"
+)
 
-n_events = st.sidebar.number_input("Number of events", 1, 10, 1)
+if not levelup_api_key:
+    st.sidebar.info("Enter your LevelUp API Key to load brand names.")
+    st.stop()
+
+api_headers = setup_levelup_headers(levelup_api_key)
+
+# —──────── Sidebar: Build Brand ID→Name mapping —────────────────────────────────
+# Your predefined list of brand IDs you care about:
+brands_list = [
+    3248, 3238, 2677, 1247, 2197, 2203, 1730,
+    3136, 3914, 1068, 2967, 106, 2406, 947,
+    1599, 1224, 950, 2, 612, 1227, 2654,
+    1142, 2561, 1326, 240, 1699, 2676, 2658,
+    2395, 2047, 611, 1330, 3135
+]
+
+# ① Fetch the full brand dictionary from LevelUp
+full_brand_map = fetch_all_brands(api_headers)
+
+# ② Filter down to only the IDs in your brands_list
+filtered_brand_map = {
+    bid: full_brand_map[bid]
+    for bid in brands_list
+    if bid in full_brand_map
+}
+
+if not filtered_brand_map:
+    st.sidebar.error("None of your specified brand IDs were found in /brands response.")
+    st.stop()
+
+# Build two parallel lists for the dropdown
+brand_ids   = list(filtered_brand_map.keys())     # e.g. [3248, 3238, 2677, …]
+brand_names = [filtered_brand_map[i] for i in brand_ids]  # e.g. ["College Football 26", "EA Sports WRC", …]
+
+# —──────── Sidebar: Event Details & Brand Name dropdown —────────────────────────
+st.sidebar.markdown("---")
+st.sidebar.header("Event Configuration")
+
+n_events = st.sidebar.number_input("Number of events", min_value=1, max_value=10, value=1, step=1)
 events: list[dict] = []
+
 for i in range(n_events):
     st.sidebar.markdown(f"**Event {i+1} Details**")
     name = st.sidebar.text_input(f"Event Name {i+1}", key=f"name_{i}") or f"Event{i+1}"
     date = st.sidebar.date_input(f"Event Date {i+1}", key=f"date_{i}")
-    brand_id = st.sidebar.number_input(
-        f"Brand ID (LevelUp) for Event {i+1}", 
-        min_value=1, step=1, key=f"brand_{i}"
+    
+    # ▼ NEW: Replace the old number_input for brandId with a selectbox of brand_names
+    selected_name = st.sidebar.selectbox(
+        f"Brand (Event {i+1})", 
+        options=brand_names, 
+        key=f"brand_select_{i}"
     )
-    # Restrict region codes to known LevelUp regions
-    region_options = ["US", "GB", "AU", "CA", "FR", "DE", "JP", "KR", "TH"]
-    region = st.sidebar.selectbox(
-        f"Region (LevelUp) for Event {i+1}", 
-        region_options, 
-        index=region_options.index("TH") if "TH" in region_options else 0, 
-        key=f"region_{i}"
-    )
+    # Find its corresponding integer ID
+    selected_id = brand_ids[brand_names.index(selected_name)]
+
+    # Region can remain a text_input or you can restrict to known codes
+    region = st.sidebar.text_input(f"Region (Event {i+1})", key=f"region_{i}", value="TH")
+    
     events.append({
         "name": name,
         "date": datetime.combine(date, datetime.min.time()),
-        "brandId": brand_id,
-        "region": region,
+        "brandId": selected_id,     # integer ID used internally
+        "region": region
     })
 
+# —──────── Sidebar: Metric selection —─────────────────────────────────────────────
 metrics = st.sidebar.multiselect(
     "Select metrics to include:",
     [
@@ -130,17 +196,19 @@ if "Social Mentions" not in metrics:
 
 # Reset manual LevelUp inputs if video metrics are deselected
 if not any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
-    for k in ["manual_levelup_toggle", "levelup_api_key"]:
+    for k in ["manual_levelup_toggle"]:
         st.session_state.pop(k, None)
 
-# Sidebar: Output regions for report tabs
+# —──────── Sidebar: Output Regions (sheet tabs) —────────────────────────────────
 regions = st.sidebar.multiselect(
     "Output Regions (sheet tabs):",
     ["US", "GB", "AU", "CA", "FR", "DE", "JP", "KR"],
     default=[]
 )
 
-# ─ Onclusive (Social Mentions) Inputs ─────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────────
+# 3) Onclusive (Social Mentions) inputs
+# ────────────────────────────────────────────────────────────────────────────────
 
 onclusive_username = st.session_state.get("onclusive_user")
 onclusive_password = st.session_state.get("onclusive_pw")
@@ -181,14 +249,16 @@ if "Social Mentions" in metrics:
                 onclusive_username,
                 onclusive_password,
                 onclusive_language,
-                "test"
+                onclusive_query
             )
             if test_count is not None:
                 st.success("✅ Onclusive login OK")
             else:
                 st.error("❌ Onclusive login failed")
 
-# ─ LevelUp (Video Views & Hours Watched) Inputs ─────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────────
+# 4) LevelUp (Video Views & Hours Watched) inputs
+# ────────────────────────────────────────────────────────────────────────────────
 
 levelup_api_key = st.session_state.get("levelup_api_key")
 manual_levelup_inputs: dict[int, dict[str, tuple[int, int]]] = {}
@@ -226,14 +296,15 @@ if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
                 )
                 manual_levelup_inputs[idx]["Hours Watched (Streams)"] = (hw_baseline, hw_actual)
     else:
-        levelup_api_key = st.text_input("LevelUp API Key", type="password", key="levelup_api_key")
-        if levelup_api_key:
+        if not levelup_api_key:
+            st.error("🔑 You must supply a LevelUp API Key in the sidebar above or choose manual entry.")
+        else:
             api_headers = setup_levelup_headers(levelup_api_key)
             st.success("🗝️ LevelUp API Key set. Ready to fetch data.")
-        else:
-            st.info("Enter your LevelUp API Key above or choose manual entry.")
 
-# ─ Generate & Download Scorecard ─────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────────
+# 5) Generate & Download Scorecard
+# ────────────────────────────────────────────────────────────────────────────────
 
 if st.button("Generate Scorecard"):
     # 1) Validate Onclusive inputs if needed
@@ -357,17 +428,17 @@ if st.button("Generate Scorecard"):
             if all_streams:
                 sheets["Hours Watched (LevelUp)"] = pd.DataFrame(all_streams)
 
-    # 3c) Additional metric sheets (Sessions, DAU, etc.) can be built similarly
+    # 3c) (Any other metric‐sheets you want to add go here…)
 
     if not sheets:
         st.warning("No sheets to generate. Please select at least one metric.")
         st.stop()
 
-    # 4) Write out to Excel and provide download
+    # 4) Write out to Excel and provide download link
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         for sheet_name, df in sheets.items():
-            safe_name = sheet_name[:31]
+            safe_name = sheet_name[:31]  # 31-char Excel limit
             df.to_excel(writer, sheet_name=safe_name, index=False)
     buffer.seek(0)
 
