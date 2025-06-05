@@ -1,5 +1,7 @@
-unsafe_allow_html=True,
-)
+import streamlit as st
+from datetime import datetime
+import pandas as pd
+from io import BytesIO
 
 # ─ Sidebar: Overall Configuration ───────────────────────────────────────────
 n_events = st.sidebar.number_input("Number of events", 1, 10, 1)
@@ -40,7 +42,6 @@ if "Social Mentions" not in metrics:
 if not any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
     for k in ["levelup_decision", "manual_levelup_toggle", "levelup_jwt"]:
         st.session_state.pop(k, None)
-
 
 # ─ Blocking login modals ────────────────────────────────────────────────────
 if "Social Mentions" in metrics and not st.session_state.get("onclusive_decision"):
@@ -232,3 +233,11 @@ if st.button("Generate Template"):
             for sheet_name, df in sheets.items():
                 safe_name = sheet_name[:31]  # Excel sheet name limit
                 df.to_excel(writer, sheet_name=safe_name, index=False)
+
+        buffer.seek(0)
+        st.download_button(
+            label="Download Report",
+            data=buffer,
+            file_name="event_report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
