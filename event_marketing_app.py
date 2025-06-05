@@ -5,10 +5,13 @@ from datetime import datetime, timedelta
 from io import BytesIO
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 1) Helper functions for LevelUp API integration (unchanged)
+# 1) Helper functions for LevelUp API integration
 # ────────────────────────────────────────────────────────────────────────────────
 
 def setup_levelup_headers(api_key: str) -> dict:
+    """
+    Constructs HTTP headers for LevelUp API requests using the provided API key.
+    """
     return {
         "accept": "application/json",
         "X-API-KEY": api_key
@@ -23,8 +26,8 @@ def fetch_levelup_data(
     data_type: str
 ) -> pd.DataFrame | None:
     """
-    Fetch “videos” or “streams” time‐series from LevelUp for brand_id & region.
-    Returns a DataFrame or None if there’s no data / error.
+    Fetches time-series data ("videos" or "streams") from LevelUp for the given brand_id & region_code.
+    Dates should be "YYYY-MM-DD" strings. Returns a DataFrame or None if no data / error.
     """
     api_url = f"https://www.levelup-analytics.com/api/client/v1/{data_type}/statsEvolution/brand/{brand_id}"
     params = {
@@ -33,7 +36,6 @@ def fetch_levelup_data(
         "brandid": brand_id,
         "region": region_code
     }
-
     response = requests.get(api_url, headers=api_headers, params=params)
     if response.status_code != 200:
         st.error(f"Error fetching {data_type} for brand {brand_id}, region {region_code}: HTTP {response.status_code}")
@@ -57,7 +59,7 @@ def fetch_levelup_data(
 def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict[str, pd.DataFrame]:
     """
     For a single event (with keys name, date, brandId, region), fetch:
-      • Baseline (30 days before) and Actual (30 days after) for both “videos” and “streams”.
+      - Baseline (30 days before) and Actual (30 days after) for both “videos” and “streams”.
     Returns a dict with possible keys "videos" and "streams", each mapping to the concatenated DataFrame.
     """
     event_date = event["date"].date()
@@ -88,6 +90,29 @@ def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict[s
         metrics_dfs["streams"] = pd.concat([str_df_baseline, str_df_actual], ignore_index=True)
 
     return metrics_dfs
+
+def compute_three_month_average(
+    api_headers: dict,
+    brand_id: int,
+    region: str,
+    event_date: datetime.date,
+    data_type: str
+) -> float:
+    """
+    Compute the average daily metric (views or watchTime) for the 90 days prior to event_date.
+    data_type: "videos" → use "views"; "streams" → use "watchTime".
+    Returns 0 if no data.
+    """
+    end_date = (event_date - timedelta(days=1)).strftime("%Y-%m-%d")
+    start_date = (event_date - timedelta(days=90)).strftime("%Y-%m-%d")
+    df = fetch_levelup_data(api_headers, brand_id, start_date, end_date, region, data_type)
+    if df is None or df.empty:
+        return 0.0
+    column = "views" if data_type == "videos" else "watchTime"
+    if column not in df.columns or "period" not in df.columns:
+        return 0.0
+    # The API returns daily rows; compute average over all returned days
+    return df[column].mean()
 
 # ────────────────────────────────────────────────────────────────────────────────
 # 2) Main Streamlit App
@@ -143,9 +168,9 @@ for i in range(n_events):
 metrics = st.sidebar.multiselect(
     "Select metrics to include:",
     [
+        "Video Views (VOD)", "Hours Watched (Streams)", "Social Mentions",
         "Sessions", "DAU", "Revenue", "Installs", "Retention", "Watch Time",
-        "ARPU", "Conversions", "Video Views (VOD)", "Hours Watched (Streams)",
-        "Social Mentions", "Search Index", "PCCV", "AMA"
+        "ARPU", "Conversions", "Search Index", "PCCV", "AMA"
     ],
     default=[]
 )
@@ -280,47 +305,48 @@ if st.button("Generate Scorecard"):
             st.stop()
         api_headers = setup_levelup_headers(levelup_api_key)
 
-    # 3) For each event, build a “wide” DataFrame where:
-    #      • Index (rows) = the metric names you picked
-    #      • Columns      = ["Baseline <date range>", "Actual <date range>", "Method"]
-    #    Then display that DataFrame under the event’s name, and also save it for Excel.
-
+    # 3) Build one DataFrame per event:
+    #      • Rows = each selected metric
+    #      • Columns = [“Metric”, “Baseline <range>”, “Actual <range>”, “3-Month Avg”]
     sheets_dict: dict[str, pd.DataFrame] = {}
 
     for idx, ev in enumerate(events):
-        # Compute date‐ranges once per event
         ev_date = ev["date"].date()
-        baseline_start = (ev_date - timedelta(days=30))
-        baseline_end   = (ev_date - timedelta(days=1))
+        baseline_start = ev_date - timedelta(days=30)
+        baseline_end   = ev_date - timedelta(days=1)
         actual_start   = ev_date
-        actual_end     = (ev_date + timedelta(days=30))
-        # Formatted strings for column headers:
-        baseline_label = f"Baseline {baseline_start:%Y-%m-%d} → {baseline_end:%Y-%m-%d}"
-        actual_label   = f"Actual   {actual_start:%Y-%m-%d} → {actual_end:%Y-%m-%d}"
-        method_label   = "Method"
+        actual_end     = ev_date + timedelta(days=30)
 
-        # Prepare a list of dicts, one per metric, to turn into a DataFrame:
+        # Column headers
+        baseline_label = f"Baseline  {baseline_start:%Y-%m-%d} → {baseline_end:%Y-%m-%d}"
+        actual_label   = f"Actual    {actual_start:%Y-%m-%d} → {actual_end:%Y-%m-%d}"
+        avg_label      = "3-Month Avg"
+
+        # Prepare rows
         rows_for_event: list[dict[str, object]] = []
 
-        # If we need to fetch LevelUp metrics, do it once:
+        # Fetch LevelUp metrics once if needed
         needs_levelup = any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics)
         fetched_metrics: dict[str, pd.DataFrame] = {}
         if needs_levelup and not (manual_levelup_inputs and idx in manual_levelup_inputs):
             fetched_metrics = generate_levelup_metrics_for_event(ev, api_headers)
 
-        # --- Loop through each metric the user selected ---
         for metric_name in metrics:
-            row = {"Metric": metric_name, baseline_label: None, actual_label: None, method_label: None}
+            row = {
+                "Metric": metric_name,
+                baseline_label: None,
+                actual_label: None,
+                avg_label: None
+            }
 
-            # 3a) Social Mentions?
+            # -- Social Mentions --
             if metric_name == "Social Mentions":
+                # Baseline & Actual
                 if manual_social_inputs and idx in manual_social_inputs:
                     base_sm, act_sm = manual_social_inputs[idx]
                     row[baseline_label] = base_sm
                     row[actual_label]   = act_sm
-                    row[method_label]   = "Manual"
                 else:
-                    # call Onclusive
                     bs = fetch_social_mentions_count(
                         f"{baseline_start:%Y-%m-%d}T00:00:00Z",
                         f"{baseline_end:%Y-%m-%d}T23:59:59Z",
@@ -339,15 +365,16 @@ if st.button("Generate Scorecard"):
                     ) or 0
                     row[baseline_label] = bs
                     row[actual_label]   = as_
-                    row[method_label]   = "API"
+                # 3‐month average for Social Mentions isn’t defined; leave blank
+                row[avg_label] = None
 
-            # 3b) Video Views (VOD)?
+            # -- Video Views (VOD) --
             elif metric_name == "Video Views (VOD)":
+                # Baseline & Actual
                 if manual_levelup_inputs and idx in manual_levelup_inputs and "Video Views (VOD)" in manual_levelup_inputs[idx]:
                     base_vv, act_vv = manual_levelup_inputs[idx]["Video Views (VOD)"]
                     row[baseline_label] = base_vv
                     row[actual_label]   = act_vv
-                    row[method_label]   = "Manual"
                 else:
                     vid_df = fetched_metrics.get("videos", pd.DataFrame())
                     if not vid_df.empty and "period" in vid_df.columns and "views" in vid_df.columns:
@@ -357,15 +384,18 @@ if st.button("Generate Scorecard"):
                         bv, av = 0, 0
                     row[baseline_label] = bv
                     row[actual_label]   = av
-                    row[method_label]   = "API"
 
-            # 3c) Hours Watched (Streams)?
+                # 3‐Month Avg (average daily “views” for 90 days before event_date)
+                avg_vv = compute_three_month_average(api_headers, ev["brandId"], ev["region"], ev_date, "videos")
+                row[avg_label] = round(avg_vv, 2)
+
+            # -- Hours Watched (Streams) --
             elif metric_name == "Hours Watched (Streams)":
+                # Baseline & Actual
                 if manual_levelup_inputs and idx in manual_levelup_inputs and "Hours Watched (Streams)" in manual_levelup_inputs[idx]:
                     base_hw, act_hw = manual_levelup_inputs[idx]["Hours Watched (Streams)"]
                     row[baseline_label] = base_hw
                     row[actual_label]   = act_hw
-                    row[method_label]   = "Manual"
                 else:
                     str_df = fetched_metrics.get("streams", pd.DataFrame())
                     if not str_df.empty and "period" in str_df.columns and "watchTime" in str_df.columns:
@@ -375,34 +405,35 @@ if st.button("Generate Scorecard"):
                         bh, ah = 0, 0
                     row[baseline_label] = bh
                     row[actual_label]   = ah
-                    row[method_label]   = "API"
 
-            # 3d) (If you add other metrics like “Sessions” or “DAU,” handle them here.)
+                # 3‐Month Avg (average daily “watchTime” for 90 days before event_date)
+                avg_hw = compute_three_month_average(api_headers, ev["brandId"], ev["region"], ev_date, "streams")
+                row[avg_label] = round(avg_hw, 2)
 
+            # -- Other metrics (e.g., Sessions, DAU) can be added here similarly --
             else:
-                # For any other metric we haven’t coded, just default to blank 0/0/API
                 row[baseline_label] = None
                 row[actual_label]   = None
-                row[method_label]   = None
+                row[avg_label]      = None
 
             rows_for_event.append(row)
 
-        # Turn this event’s rows into a DataFrame
+        # Convert to DataFrame and set index to “Metric”
         df_event = pd.DataFrame(rows_for_event).set_index("Metric")
 
-        # Display that DataFrame in the UI under the event name
+        # Display in Streamlit under event header
         st.markdown(f"### Event {idx+1}: {ev['name']}  \n"
                     f"**Date:** {ev['date'].date():%Y-%m-%d}  |  **Region:** {ev['region']}")
-        st.dataframe(df_event)  # shows the table in the Streamlit app
+        st.dataframe(df_event)
 
-        # Also store it for the Excel writer (naming each sheet by event name)
+        # Save for Excel (reset index so “Metric” is a column again)
         sheets_dict[ev["name"][:28] or f"Event{idx+1}"] = df_event.reset_index()
 
-    # 4) Write out all event‐tables to one Excel, each event in its own sheet
+    # 4) Write each event’s table into a separate sheet in one Excel workbook
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         for sheet_name, df_event in sheets_dict.items():
-            safe_name = sheet_name[:31]  # Excel sheet limit
+            safe_name = sheet_name[:31]
             df_event.to_excel(writer, sheet_name=safe_name, index=False)
     buffer.seek(0)
 
