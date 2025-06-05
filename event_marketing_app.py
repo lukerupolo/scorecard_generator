@@ -51,8 +51,8 @@ def fetch_levelup_data(
 
     if data_type == "videos" and "views" in df.columns:
         df["views"] = df["views"].astype(int)
-    elif data_type == "streams" and "watchTime" in df.columns:
-        df["watchTime"] = df["watchTime"].astype(float)
+    elif data_type == "streams" and "hoursWatched" in df.columns:
+        df["hoursWatched"] = df["hoursWatched"].astype(float)
 
     return df
 
