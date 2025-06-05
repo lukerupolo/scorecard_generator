@@ -1,6 +1,3 @@
-# ────────────────────────────────────────────────────────────────────────────────
-# 1) Imports
-# ────────────────────────────────────────────────────────────────────────────────
 import streamlit as st
 import requests
 import pandas as pd
@@ -8,8 +5,9 @@ from datetime import datetime, timedelta
 from io import BytesIO
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 2) Helper functions (fetch_levelup_data, generate_levelup_metrics_for_event, etc.)
+# 1) Helper functions for LevelUp API integration (unchanged)
 # ────────────────────────────────────────────────────────────────────────────────
+
 def setup_levelup_headers(api_key: str) -> dict:
     return {
         "accept": "application/json",
@@ -105,26 +103,18 @@ def compute_three_month_average(
     return 0.0
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 3) Streamlit page configuration
+# 2) Streamlit page configuration
 # ────────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 4) Sidebar: API key, events, metric selection
+# 3) Sidebar: Event setup (always visible)
 # ────────────────────────────────────────────────────────────────────────────────
 
-st.sidebar.subheader("🔒 LevelUp Authentication")
-levelup_api_key = st.sidebar.text_input("Paste your LevelUp API Key here", type="password", key="levelup_api_key")
-if not levelup_api_key:
-    st.sidebar.info("Enter your LevelUp API Key to proceed.")
-    st.stop()
-api_headers = setup_levelup_headers(levelup_api_key)
-
+st.sidebar.header("Event Configuration")
 SINGLE_BRAND_ID = 3136
 SINGLE_BRAND_NAME = "EA Sports FC 25"
 
-st.sidebar.markdown("---")
-st.sidebar.header("Event Configuration")
 n_events = st.sidebar.number_input("Number of events", min_value=1, max_value=10, value=1, step=1)
 events: list[dict] = []
 
@@ -132,54 +122,67 @@ for i in range(n_events):
     st.sidebar.markdown(f"**Event {i+1} Details**")
     name = st.sidebar.text_input(f"Event Name {i+1}", key=f"name_{i}") or f"Event{i+1}"
     date = st.sidebar.date_input(f"Event Date {i+1}", key=f"date_{i}")
+
+    # Brand dropdown is always the single known game:
     _ = st.sidebar.selectbox(f"Brand (Event {i+1})", options=[SINGLE_BRAND_NAME], key=f"brand_select_{i}")
     selected_id = SINGLE_BRAND_ID
+
     region = st.sidebar.text_input(f"Region (Event {i+1})", key=f"region_{i}", value="TH")
+
     events.append({
-        "name": name,
-        "date": datetime.combine(date, datetime.min.time()),
+        "name":   name,
+        "date":   datetime.combine(date, datetime.min.time()),
         "brandId": selected_id,
         "region": region
     })
 
+# ────────────────────────────────────────────────────────────────────────────────
+# 4) Sidebar: Metric selection (always visible)
+# ────────────────────────────────────────────────────────────────────────────────
+
 metrics = st.sidebar.multiselect(
     "Select metrics to include:",
     [
-        "Video Views (VOD)", "Hours Watched (Streams)", "Social Mentions",
-        "Sessions", "DAU", "Revenue", "Installs", "Retention", "Watch Time",
-        "ARPU", "Conversions", "Search Index", "PCCV", "AMA"
+        "Video Views (VOD)",
+        "Hours Watched (Streams)",
+        "Social Mentions",
+        "Sessions",
+        "DAU",
+        "Revenue",
+        "Installs",
+        "Retention",
+        "Watch Time",
+        "ARPU",
+        "Conversions",
+        "Search Index",
+        "PCCV",
+        "AMA"
     ],
     default=[]
 )
 
-# Reset Onclusive if deselected
+# If Social Mentions is NOT selected, clear any saved Onclusive state
 if "Social Mentions" not in metrics:
     for k in ["manual_social_toggle", "onclusive_user", "onclusive_pw", "onclusive_query"]:
         st.session_state.pop(k, None)
 
-# Reset manual LevelUp if deselected
+# If no Video or Streams metrics are selected, clear any saved manual LevelUp state
 if not any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
     st.session_state.pop("manual_levelup_toggle", None)
 
-regions = st.sidebar.multiselect(
-    "Output Regions (sheet tabs):",
-    ["US", "GB", "AU", "CA", "FR", "DE", "JP", "KR"],
-    default=[]
-)
-
 # ────────────────────────────────────────────────────────────────────────────────
-# 5) Onclusive (Social Mentions) inputs
+# 5) Sidebar: Onclusive (Social Mentions) credentials (visible only if needed)
 # ────────────────────────────────────────────────────────────────────────────────
 
-onclusive_username = st.session_state.get("onclusive_user")
-onclusive_password = st.session_state.get("onclusive_pw")
-onclusive_language = st.session_state.get("onclusive_lang", "en")
-onclusive_query = st.session_state.get("onclusive_query")
+onclusive_username = None
+onclusive_password = None
+onclusive_language = "en"
+onclusive_query = None
 manual_social_inputs: dict[int, tuple[int, int]] = {}
 
 if "Social Mentions" in metrics:
-    st.subheader("🔐 Onclusive (Digimind) for Social Mentions")
-    use_manual_social = st.checkbox(
+    st.sidebar.subheader("🔐 Onclusive Authentication")
+    use_manual_social = st.sidebar.checkbox(
         "❔ Enter Social Mentions counts manually (skip Onclusive)",
         key="manual_social_toggle",
         value=st.session_state.get("manual_social_toggle", False)
@@ -187,22 +190,23 @@ if "Social Mentions" in metrics:
     if use_manual_social:
         st.info("Provide baseline & actual Social Mentions per event.")
         for idx, ev in enumerate(events):
-            base_sm = st.number_input(
+            base_sm = st.sidebar.number_input(
                 f"Event {idx+1} ({ev['name']}): Baseline Social Mentions",
                 min_value=0, step=1, key=f"social_baseline_{idx}"
             )
-            act_sm = st.number_input(
+            act_sm = st.sidebar.number_input(
                 f"Event {idx+1} ({ev['name']}): Actual Social Mentions",
                 min_value=0, step=1, key=f"social_actual_{idx}"
             )
             manual_social_inputs[idx] = (base_sm, act_sm)
     else:
-        onclusive_username = st.text_input("Onclusive Username", placeholder="you@example.com", key="onclusive_user")
-        onclusive_password = st.text_input("Onclusive Password", type="password", key="onclusive_pw")
-        onclusive_language = st.text_input("Language", value="en", key="onclusive_lang")
-        onclusive_query = st.text_input("Search Keywords", placeholder="e.g. FIFA, EA Sports", key="onclusive_query")
+        onclusive_username = st.sidebar.text_input("Onclusive Username", placeholder="you@example.com", key="onclusive_user")
+        onclusive_password = st.sidebar.text_input("Onclusive Password", type="password", key="onclusive_pw")
+        onclusive_language = st.sidebar.text_input("Language", value="en", key="onclusive_lang")
+        onclusive_query    = st.sidebar.text_input("Search Keywords", placeholder="e.g. FIFA, EA Sports", key="onclusive_query")
+
         if onclusive_username and onclusive_password and onclusive_query:
-            st.write("🔍 Testing Onclusive credentials…")
+            st.sidebar.write("🔍 Testing Onclusive credentials…")
             test_count = fetch_social_mentions_count(
                 "2024-01-01T00:00:00Z",
                 "2024-01-02T00:00:00Z",
@@ -212,80 +216,100 @@ if "Social Mentions" in metrics:
                 onclusive_query
             )
             if test_count is not None:
-                st.success("✅ Onclusive login OK")
+                st.sidebar.success("✅ Onclusive login OK")
             else:
-                st.error("❌ Onclusive login failed")
+                st.sidebar.error("❌ Onclusive login failed")
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 6) LevelUp manual inputs
+# 6) Sidebar: LevelUp API key (visible only if Video or Streams selected)
 # ────────────────────────────────────────────────────────────────────────────────
 
-levelup_api_key = st.session_state.get("levelup_api_key")
+levelup_api_key = None
+api_headers = None
 manual_levelup_inputs: dict[int, dict[str, tuple[int, int]]] = {}
 
 if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
-    st.subheader("🎮 LevelUp API for Video Views & Hours Watched")
-    use_manual_levelup = st.checkbox(
+    st.sidebar.subheader("🔒 LevelUp Authentication")
+    levelup_api_key = st.sidebar.text_input(
+        "Paste your LevelUp API Key here",
+        type="password",
+        key="levelup_api_key"
+    )
+    if levelup_api_key:
+        api_headers = setup_levelup_headers(levelup_api_key)
+        st.sidebar.success("🗝️ LevelUp API Key set. Ready to fetch data.")
+    else:
+        st.sidebar.info("Enter LevelUp API Key to fetch Video/Streams metrics.")
+
+    # If the user checks “manual entry” for LevelUp metrics:
+    use_manual_levelup = st.sidebar.checkbox(
         "❔ Enter LevelUp metrics manually (skip API)",
         key="manual_levelup_toggle",
         value=st.session_state.get("manual_levelup_toggle", False)
     )
     if use_manual_levelup:
-        st.info("Provide baseline & actual values for LevelUp metrics per event.")
+        st.sidebar.info("Provide baseline & actual values for LevelUp metrics per event.")
         for idx, ev in enumerate(events):
             manual_levelup_inputs[idx] = {}
             if "Video Views (VOD)" in metrics:
-                vv_base = st.number_input(
+                vv_base = st.sidebar.number_input(
                     f"Event {idx+1} ({ev['name']}): Baseline Video Views (VOD)",
                     min_value=0, step=1, key=f"levelup_vv_baseline_{idx}"
                 )
-                vv_act = st.number_input(
+                vv_act = st.sidebar.number_input(
                     f"Event {idx+1} ({ev['name']}): Actual Video Views (VOD)",
                     min_value=0, step=1, key=f"levelup_vv_actual_{idx}"
                 )
                 manual_levelup_inputs[idx]["Video Views (VOD)"] = (vv_base, vv_act)
 
             if "Hours Watched (Streams)" in metrics:
-                hw_base = st.number_input(
+                hw_base = st.sidebar.number_input(
                     f"Event {idx+1} ({ev['name']}): Baseline Hours Watched (Streams)",
                     min_value=0, step=1, key=f"levelup_hw_baseline_{idx}"
                 )
-                hw_act = st.number_input(
+                hw_act = st.sidebar.number_input(
                     f"Event {idx+1} ({ev['name']}): Actual Hours Watched (Streams)",
                     min_value=0, step=1, key=f"levelup_hw_actual_{idx}"
                 )
                 manual_levelup_inputs[idx]["Hours Watched (Streams)"] = (hw_base, hw_act)
-    else:
-        if not levelup_api_key:
-            st.error("🔑 You must supply a LevelUp API Key or choose manual entry.")
-        else:
-            api_headers = setup_levelup_headers(levelup_api_key)
-            st.success("🗝️ LevelUp API Key set. Ready to fetch data.")
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 7) Generate Scorecard—one table per event, metrics on left, renamed column
+# 7) Sidebar: Output Regions (sheet tabs)—still always visible
+# ────────────────────────────────────────────────────────────────────────────────
+
+regions = st.sidebar.multiselect(
+    "Output Regions (sheet tabs):",
+    ["US", "GB", "AU", "CA", "FR", "DE", "JP", "KR"],
+    default=[]
+)
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 8) Generate Scorecard—one table per event, metrics on left
 # ────────────────────────────────────────────────────────────────────────────────
 
 if st.button("Generate Scorecard"):
-    # Ensure at least one metric is selected
-    if len(metrics) == 0:
+    # 8.1) Check metrics were selected
+    if not metrics:
         st.warning("Please select at least one metric before generating.")
         st.stop()
 
-    # Validate Onclusive if needed
+    # 8.2) Validate Onclusive if needed
     if "Social Mentions" in metrics and not manual_social_inputs:
         if not (onclusive_username and onclusive_password and onclusive_query):
             st.warning("Enter Onclusive credentials or choose manual entry for Social Mentions.")
             st.stop()
 
-    # Validate LevelUp API if needed
-    if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics) and not manual_levelup_inputs:
-        if not levelup_api_key:
+    # 8.3) Validate LevelUp API if needed
+    if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
+        # If user did NOT choose manual and no API key, stop
+        if not manual_levelup_inputs and not levelup_api_key:
             st.warning("Provide a LevelUp API Key or choose manual entry for video metrics.")
             st.stop()
-        api_headers = setup_levelup_headers(levelup_api_key)
+        # If an API key was typed, set headers (otherwise manual inputs will be used)
+        if levelup_api_key:
+            api_headers = setup_levelup_headers(levelup_api_key)
 
-    # Build one DataFrame per event
+    # 8.4) Build one DataFrame per event
     sheets_dict: dict[str, pd.DataFrame] = {}
 
     for idx, ev in enumerate(events):
@@ -297,7 +321,7 @@ if st.button("Generate Scorecard"):
 
         baseline_label = f"Baseline  {baseline_start:%Y-%m-%d} → {baseline_end:%Y-%m-%d}"
         actual_label   = f"Actual    {actual_start:%Y-%m-%d} → {actual_end:%Y-%m-%d}"
-        avg_label      = "Baseline Method (3 months)"  # Renamed column
+        avg_label      = "Baseline Method (3 months)"
 
         needs_levelup = any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics)
         fetched = {}
@@ -313,9 +337,9 @@ if st.button("Generate Scorecard"):
                 avg_label: None
             }
 
-            # --- Social Mentions ---
+            # -- Social Mentions --
             if metric_name == "Social Mentions":
-                if manual_social_inputs and idx in manual_social_inputs:
+                if idx in manual_social_inputs:
                     base_sm, act_sm = manual_social_inputs[idx]
                     row[baseline_label] = base_sm
                     row[actual_label]   = act_sm
@@ -323,20 +347,26 @@ if st.button("Generate Scorecard"):
                     bs = fetch_social_mentions_count(
                         f"{baseline_start:%Y-%m-%d}T00:00:00Z",
                         f"{baseline_end:%Y-%m-%d}T23:59:59Z",
-                        onclusive_username, onclusive_password, onclusive_language, onclusive_query
+                        onclusive_username,
+                        onclusive_password,
+                        onclusive_language,
+                        onclusive_query
                     ) or 0
                     as_ = fetch_social_mentions_count(
                         f"{actual_start:%Y-%m-%d}T00:00:00Z",
                         f"{actual_end:%Y-%m-%d}T23:59:59Z",
-                        onclusive_username, onclusive_password, onclusive_language, onclusive_query
+                        onclusive_username,
+                        onclusive_password,
+                        onclusive_language,
+                        onclusive_query
                     ) or 0
                     row[baseline_label] = bs
                     row[actual_label]   = as_
                 row[avg_label] = None
 
-            # --- Video Views (VOD) ---
+            # -- Video Views (VOD) --
             elif metric_name == "Video Views (VOD)":
-                if manual_levelup_inputs and idx in manual_levelup_inputs and "Video Views (VOD)" in manual_levelup_inputs[idx]:
+                if idx in manual_levelup_inputs and "Video Views (VOD)" in manual_levelup_inputs[idx]:
                     base_vv, act_vv = manual_levelup_inputs[idx]["Video Views (VOD)"]
                     row[baseline_label] = base_vv
                     row[actual_label]   = act_vv
@@ -353,9 +383,9 @@ if st.button("Generate Scorecard"):
                 avg_vv = compute_three_month_average(api_headers, ev["brandId"], ev["region"], ev_date, "videos")
                 row[avg_label] = round(avg_vv, 2)
 
-            # --- Hours Watched (Streams) ---
+            # -- Hours Watched (Streams) --
             elif metric_name == "Hours Watched (Streams)":
-                if manual_levelup_inputs and idx in manual_levelup_inputs and "Hours Watched (Streams)" in manual_levelup_inputs[idx]:
+                if idx in manual_levelup_inputs and "Hours Watched (Streams)" in manual_levelup_inputs[idx]:
                     base_hw, act_hw = manual_levelup_inputs[idx]["Hours Watched (Streams)"]
                     row[baseline_label] = base_hw
                     row[actual_label]   = act_hw
@@ -377,7 +407,7 @@ if st.button("Generate Scorecard"):
                 avg_hw = compute_three_month_average(api_headers, ev["brandId"], ev["region"], ev_date, "streams")
                 row[avg_label] = round(avg_hw, 2)
 
-            # --- Other metrics (Sessions, DAU, etc.) ---
+            # -- Other metrics (Sessions, DAU, etc.) --
             else:
                 row[baseline_label] = None
                 row[actual_label]   = None
@@ -385,7 +415,6 @@ if st.button("Generate Scorecard"):
 
             rows_for_event.append(row)
 
-        # Convert to DataFrame and set index
         df_event = pd.DataFrame(rows_for_event).set_index("Metric")
 
         st.markdown(
@@ -394,10 +423,8 @@ if st.button("Generate Scorecard"):
         )
         st.dataframe(df_event)
 
-        # Save for Excel
         sheets_dict[ev["name"][:28] or f"Event{idx+1}"] = df_event.reset_index()
 
-    # Write all event‐tables to Excel
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         for sheet_name, df_event in sheets_dict.items():
