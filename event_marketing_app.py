@@ -208,7 +208,7 @@ metrics = st.sidebar.multiselect(
         "PCCV",
         "AMA",
         "Stream Views",
-        "UGC Views"
+        "UGC Views",
         "Social Impressions (FC Owned Channels)",
         "Social Conversation Volume",
         "Social Sentiment",
