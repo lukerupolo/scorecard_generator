@@ -18,6 +18,26 @@ def setup_levelup_headers(api_key: str) -> dict:
 # [Other helper functions unchanged: fetch_levelup_data, generate_levelup_metrics_for_event,
 # compute_three_month_average, fetch_social_mentions_count]
 
+import streamlit as st
+import requests
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+from io import BytesIO
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 1) Helper functions for LevelUp API integration and Social Mentions (Onclusive)
+# ────────────────────────────────────────────────────────────────────────────────
+
+def setup_levelup_headers(api_key: str) -> dict:
+    return {
+        "accept": "application/json",
+        "X-API-KEY": api_key
+    }
+
+# [Other helper functions unchanged: fetch_levelup_data, generate_levelup_metrics_for_event,
+# compute_three_month_average, fetch_social_mentions_count]
+
 # ────────────────────────────────────────────────────────────────────────────────
 # 2) Streamlit app configuration and sidebar
 # ────────────────────────────────────────────────────────────────────────────────
@@ -83,63 +103,60 @@ for i in range(n_events):
     })
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 4) Sidebar: Metric Selection, Authentication, and Main Logic
-#    (unchanged, but now references ev["brandId"], ev["brandName"], ev["region"])
-# ────────────────────────────────────────────────────────────────────────────────
-
-# [Insert rest of your code here exactly as before, using the events list defined above]
-
-
-st.sidebar.markdown("---")
-
-# ────────────────────────────────────────────────────────────────────────────────
-# 4) Sidebar: Metric Selection
+# 4) Sidebar: Metric Selection with custom metric input
 # ────────────────────────────────────────────────────────────────────────────────
 
 st.sidebar.markdown("## 🎛️ Metric Selection")
-st.sidebar.markdown("Choose one or more metrics to include in your scorecard:")
+st.sidebar.markdown("Choose one or more predefined metrics or add your own custom metric.")
+
+predefined_metrics = [
+    "Video Views (VOD)",
+    "Hours Watched (Streams)",
+    "Social Mentions",
+    "Sessions",
+    "DAU",
+    "Revenue",
+    "Installs",
+    "Retention",
+    "Watch Time",
+    "ARPU",
+    "Conversions",
+    "Search Index",
+    "PCCV",
+    "AMA",
+    "Stream Views",
+    "UGC Views",
+    "Social Impressions (FC Owned Channels)",
+    "Social Conversation Volume",
+    "Social Sentiment",
+]
 
 metrics = st.sidebar.multiselect(
-    "",
-    [
-        "Video Views (VOD)",
-        "Hours Watched (Streams)",
-        "Social Mentions",
-        "Sessions",
-        "DAU",
-        "Revenue",
-        "Installs",
-        "Retention",
-        "Watch Time",
-        "ARPU",
-        "Conversions",
-        "Search Index",
-        "PCCV",
-        "AMA",
-        "Stream Views",
-        "UGC Views",
-        "Social Impressions (FC Owned Channels)",
-        "Social Conversation Volume",
-        "Social Sentiment",
-    ],
+    "Select metrics:",
+    options=predefined_metrics,
     default=[],
+    key="metrics_multiselect"
 )
 
-# Clear saved Onclusive state if Social Mentions is deselected
-if "Social Mentions" not in metrics:
-    for k in [
-        "manual_social_toggle",
-        "onclusive_user",
-        "onclusive_pw",
-        "onclusive_query",
-    ]:
-        st.session_state.pop(k, None)
+custom_metric = st.sidebar.text_input(
+    "✍️ Add Custom Metric",
+    placeholder="Type a custom metric and press Enter",
+    key="custom_metric_input"
+)
+if custom_metric:
+    metrics.append(custom_metric)
 
-# Clear saved LevelUp state if no Video/Streams metrics are selected
-if not any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
-    st.session_state.pop("manual_levelup_toggle", None)
+# ────────────────────────────────────────────────────────────────────────────────
+# 5) Sidebar: Authentication for selected metrics (Onclusive & LevelUp)
+# ────────────────────────────────────────────────────────────────────────────────
 
-st.sidebar.markdown("---")
+# [Keep your Onclusive and LevelUp authentication sections here, unchanged]
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 6) Main: Generate Scorecard and Proposed Benchmark
+# ────────────────────────────────────────────────────────────────────────────────
+
+# [Continue with your existing main logic, using the updated `events` and `metrics` lists]
 
 # ────────────────────────────────────────────────────────────────────────────────
 # 5) Sidebar: Onclusive (Social Mentions) Authentication
@@ -258,17 +275,6 @@ if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
     st.sidebar.markdown("---")
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 7) Sidebar: Output Regions (sheet tabs)
-# ────────────────────────────────────────────────────────────────────────────────
-
-st.sidebar.markdown("## 🌍 Output Regions")
-st.sidebar.markdown("Select which regions should appear as separate tabs in the Excel output.")
-regions = st.sidebar.multiselect(
-    "",
-    ["US", "GB", "AU", "CA", "FR", "DE", "JP", "KR"],
-    default=[],
-)
-st.sidebar.markdown("---")
 
 # Initialize session_state flags (only once)
 if "scorecard_ready" not in st.session_state:
