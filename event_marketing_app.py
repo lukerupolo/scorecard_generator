@@ -18,6 +18,9 @@ def setup_levelup_headers(api_key: str) -> dict:
         "X-API-KEY": api_key
     }
 
+# ... [keep helper functions fetch_levelup_data, generate_levelup_metrics_for_event,
+# compute_three_month_average, fetch_social_mentions_count unchanged] ...
+
 def fetch_levelup_data(
     api_headers: dict,
     brand_id: int,
@@ -26,30 +29,19 @@ def fetch_levelup_data(
     region_code: str,
     data_type: str
 ) -> pd.DataFrame | None:
-    """
-    Fetches time-series data ("videos" or "streams") from LevelUp for the given brand_id & region_code.
-    Dates should be "YYYY-MM-DD" strings. Returns a DataFrame or None if no data / error.
-    """
+    # unchanged
     api_url = f"https://www.levelup-analytics.com/api/client/v1/{data_type}/statsEvolution/brand/{brand_id}"
-    params = {
-        "from": start_date,
-        "to": end_date,
-        "brandid": brand_id,
-        "region": region_code
-    }
+    params = {"from": start_date, "to": end_date, "brandid": brand_id, "region": region_code}
     resp = requests.get(api_url, headers=api_headers, params=params)
     if resp.status_code != 200:
         st.error(f"Error fetching {data_type} for brand {brand_id}, region {region_code}: HTTP {resp.status_code}")
         return None
-
     payload = resp.json().get("data", [])
     if not payload:
         return None
-
     df = pd.DataFrame(payload)
     df["brand_id"] = brand_id
     df["country_region_code"] = region_code
-
     if data_type == "videos" and "views" in df.columns:
         df["views"] = df["views"].astype(int)
     elif data_type == "streams":
@@ -57,42 +49,33 @@ def fetch_levelup_data(
             df["hoursWatched"] = df["hoursWatched"].astype(float)
     return df
 
-def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict[str, pd.DataFrame]:
-    """
-    For a single event (with keys name, date, brandId, region), fetch:
-      - Baseline (7 days before) and Actual (7 days after) for both “videos” and “streams”.
-    Returns a dict with possible keys "videos" and "streams", each mapping to the concatenated DataFrame.
-    """
-    event_date = event["date"].date()
+# ... (rest helper fns) ...
 
-    # 7-day windows
+def generate_levelup_metrics_for_event(event: dict, api_headers: dict) -> dict[str, pd.DataFrame]:
+    # unchanged
+    event_date = event["date"].date()
     baseline_start = (event_date - timedelta(days=7)).strftime("%Y-%m-%d")
     baseline_end   = (event_date - timedelta(days=1)).strftime("%Y-%m-%d")
     actual_start   = event_date.strftime("%Y-%m-%d")
     actual_end     = (event_date + timedelta(days=6)).strftime("%Y-%m-%d")
-
     brand = int(event["brandId"])
     region = event["region"]
-
     metrics_dfs: dict[str, pd.DataFrame] = {}
-
-    # Video Views (VOD)
     vid_df_baseline = fetch_levelup_data(api_headers, brand, baseline_start, baseline_end, region, "videos")
     vid_df_actual   = fetch_levelup_data(api_headers, brand, actual_start, actual_end, region, "videos")
     if vid_df_baseline is not None and vid_df_actual is not None:
         vid_df_baseline["period"] = "baseline"
         vid_df_actual["period"]   = "actual"
         metrics_dfs["videos"] = pd.concat([vid_df_baseline, vid_df_actual], ignore_index=True)
-
-    # Hours Watched (Streams)
     str_df_baseline = fetch_levelup_data(api_headers, brand, baseline_start, baseline_end, region, "streams")
     str_df_actual   = fetch_levelup_data(api_headers, brand, actual_start, actual_end, region, "streams")
     if str_df_baseline is not None and str_df_actual is not None:
         str_df_baseline["period"] = "baseline"
         str_df_actual["period"]   = "actual"
         metrics_dfs["streams"] = pd.concat([str_df_baseline, str_df_actual], ignore_index=True)
-
     return metrics_dfs
+
+# ... compute_three_month_average, fetch_social_mentions_count ...
 
 def compute_three_month_average(
     api_headers: dict,
@@ -101,27 +84,17 @@ def compute_three_month_average(
     event_date: datetime.date,
     data_type: str
 ) -> float:
-    """
-    Compute the average daily metric (views or hoursWatched) for 90 days prior to event_date.
-    data_type: "videos" → use "views"; "streams" → use "hoursWatched".
-    Returns 0 if no data.
-    """
+    # unchanged
     end_date = (event_date - timedelta(days=1)).strftime("%Y-%m-%d")
     start_date = (event_date - timedelta(days=90)).strftime("%Y-%m-%d")
     df = fetch_levelup_data(api_headers, brand_id, start_date, end_date, region, data_type)
     if df is None or df.empty:
         return 0.0
+    column = "views" if data_type == "videos" else ("hoursWatched" if "hoursWatched" in df.columns else None)
+    return df[column].mean() if column and column in df.columns else 0.0
 
-    if data_type == "videos":
-        column = "views"
-    else:
-        column = "hoursWatched" if "hoursWatched" in df.columns else None
+# Placeholder for social mentions
 
-    if column and column in df.columns:
-        return df[column].mean()
-    return 0.0
-
-# Placeholder for fetching social mentions count.
 def fetch_social_mentions_count(
     start_iso: str,
     end_iso: str,
@@ -130,56 +103,69 @@ def fetch_social_mentions_count(
     language: str,
     query: str
 ) -> int:
-    """
-    Placeholder function. Replace with your actual Onclusive API call implementation.
-    Returns an integer count of social mentions between start_iso and end_iso.
-    """
     return 0
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 2) Streamlit app configuration and sidebar with emojis
+# 2) Streamlit app configuration and sidebar
 # ────────────────────────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
 # ────────────────────────────────────────────────────────────────────────────────
-# 3) Sidebar: Event Configuration
+# 3) Sidebar: Event Configuration (dynamic game + region)
 # ────────────────────────────────────────────────────────────────────────────────
 
 st.sidebar.markdown("## 📅 Event Configuration")
 st.sidebar.markdown("Set up one or more events and their details below.")
 
-SINGLE_BRAND_ID = 3136
-SINGLE_BRAND_NAME = "EA Sports FC 25"
-
 n_events = st.sidebar.number_input(
     "Number of events", min_value=1, max_value=10, value=1, step=1
 )
-
 events: list[dict] = []
 for i in range(n_events):
     st.sidebar.markdown(f"### Event {i+1}")
+    
+    # User-configurable Brand Name & ID
+    brand_name = st.sidebar.text_input(
+        f"🎮 Brand Name (Event {i+1})",
+        key=f"brand_name_{i}",
+        value="EA Sports FC25"
+    )
+    brand_id = st.sidebar.number_input(
+        f"🆔 Brand ID (Event {i+1})",
+        key=f"brand_id_{i}",
+        value=3136,
+        min_value=0,
+        step=1
+    )
+
     name = st.sidebar.text_input(
-        f"🔤 Name (Event {i+1})", key=f"name_{i}"
-    ) or f"Event{i+1}"
+        f"🔤 Event Label (Event {i+1})",
+        key=f"name_{i}",
+        value=brand_name
+    )
     date = st.sidebar.date_input(
         f"📅 Date (Event {i+1})", key=f"date_{i}"
     )
 
-    st.sidebar.markdown(f"• **Brand** (fixed): {SINGLE_BRAND_NAME}")
-    _ = st.sidebar.selectbox(
-        f"", options=[SINGLE_BRAND_NAME], key=f"brand_select_{i}"
-    )
     region = st.sidebar.text_input(
-        f"🌐 Region Code (Event {i+1})", key=f"region_{i}", value="TH"
+        f"🌐 Region Code (Event {i+1})",
+        key=f"region_{i}",
+        value="TH"
     )
 
     events.append({
         "name": name,
         "date": datetime.combine(date, datetime.min.time()),
-        "brandId": SINGLE_BRAND_ID,
+        "brandId": int(brand_id),
+        "brandName": brand_name,
         "region": region,
     })
+
+# ────────────────────────────────────────────────────────────────────────────────
+# (Continue the rest of the metric-selection, authentication, and main logic)
+# Ensure that wherever you display or fetch, you reference ev["brandId"], ev["brandName"], ev["region"].
+# ────────────────────────────────────────────────────────────────────────────────
 
 st.sidebar.markdown("---")
 
