@@ -39,6 +39,27 @@ def setup_levelup_headers(api_key: str) -> dict:
 # compute_three_month_average, fetch_social_mentions_count]
 
 # ────────────────────────────────────────────────────────────────────────────────
+import streamlit as st
+import requests
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+from io import BytesIO
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 1) Helper functions for LevelUp API integration and Social Mentions (Onclusive)
+# ────────────────────────────────────────────────────────────────────────────────
+
+def setup_levelup_headers(api_key: str) -> dict:
+    return {
+        "accept": "application/json",
+        "X-API-KEY": api_key
+    }
+
+# [Other helper functions unchanged: fetch_levelup_data, generate_levelup_metrics_for_event,
+# compute_three_month_average, fetch_social_mentions_count]
+
+# ────────────────────────────────────────────────────────────────────────────────
 # 2) Streamlit app configuration and sidebar
 # ────────────────────────────────────────────────────────────────────────────────
 
@@ -51,7 +72,8 @@ game_options = {
     "Madden NFL 25": 3150,
     "NHL 25": 3160,
 }
-region_options = ["US", "GB", "AU", "CA", "FR", "DE", "JP", "KR", "TH"]
+# Add ‘Other’ to allow custom region codes
+region_options = ["US", "GB", "AU", "CA", "FR", "DE", "JP", "KR", "TH", "Other"]
 
 # ────────────────────────────────────────────────────────────────────────────────
 # 3) Sidebar: Event Configuration with dropdowns
@@ -87,12 +109,19 @@ for i in range(n_events):
         f"📅 Date (Event {i+1})", key=f"date_{i}"
     )
 
-    # Dropdown for region code
-    region = st.sidebar.selectbox(
+    # Dropdown for region code with custom entry
+    selected_region = st.sidebar.selectbox(
         f"🌐 Select Region (Event {i+1})",
         options=region_options,
-        key=f"region_{i}"
+        key=f"region_select_{i}"
     )
+    if selected_region == "Other":
+        region = st.sidebar.text_input(
+            f"Enter custom region code (Event {i+1})",
+            key=f"region_custom_{i}"
+        ) or ""
+    else:
+        region = selected_region
 
     events.append({
         "name": name,
@@ -145,6 +174,19 @@ custom_metric = st.sidebar.text_input(
 )
 if custom_metric:
     metrics.append(custom_metric)
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 5) Sidebar: Authentication for selected metrics (Onclusive & LevelUp)
+# ────────────────────────────────────────────────────────────────────────────────
+
+# [Keep your Onclusive and LevelUp authentication sections here, unchanged]
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 6) Main: Generate Scorecard and Proposed Benchmark
+# ────────────────────────────────────────────────────────────────────────────────
+
+# [Continue with your existing main logic, using the updated `events` and `metrics` lists]
+
 
 # ────────────────────────────────────────────────────────────────────────────────
 # 5) Sidebar: Authentication for selected metrics (Onclusive & LevelUp)
