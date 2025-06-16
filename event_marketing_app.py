@@ -5,6 +5,9 @@ import numpy as np
 from datetime import datetime, timedelta
 from io import BytesIO
 
+DEBUG = st.sidebar.checkbox("🔍 Show LevelUp raw data")
+
+
 # ────────────────────────────────────────────────────────────────────────────────
 # 1) Helper functions for LevelUp API integration and Social Mentions (Onclusive)
 # ────────────────────────────────────────────────────────────────────────────────
@@ -395,6 +398,21 @@ if st.button("✅ Generate Scorecard"):
         fetched = {}
         if needs_levelup and not (manual_levelup_inputs and idx in manual_levelup_inputs):
             fetched = generate_levelup_metrics_for_event(ev, api_headers)
+            if DEBUG:
+    st.sidebar.markdown(f"**Raw ‘videos’ Data for {ev['name']}**")
+    st.sidebar.write(fetched["videos"])                   # see every row
+    sum_views = fetched["videos"]["views"].sum()
+    st.sidebar.write("→ sum of views:", sum_views)
+
+    st.sidebar.markdown(f"**Raw ‘streams’ Data for {ev['name']}**")
+    st.sidebar.write(fetched["streams"])
+    sum_hours = (
+        fetched["streams"].get("hoursWatched", 
+            fetched["streams"].get("watchTime", pd.Series())
+        ).sum()
+    )
+    st.sidebar.write("→ sum of hours watched:", sum_hours)
+
 
         rows_for_event: list[dict[str, object]] = []
         for metric_name in metrics:
