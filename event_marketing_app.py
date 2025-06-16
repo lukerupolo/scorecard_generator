@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from io import BytesIO
-
+st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 DEBUG = st.sidebar.checkbox("🔍 Show LevelUp raw data")
 
 
@@ -95,7 +95,6 @@ def compute_three_month_average(
 # ────────────────────────────────────────────────────────────────────────────────
 
 
-st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
 # Predefined game-to-ID mapping and regions list for dropdowns
 game_options = {
