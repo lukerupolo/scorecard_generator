@@ -1,14 +1,14 @@
-import streamlit as st
-import requests
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-from io import BytesIO
+1 import streamlit as st
+2 import requests
+3 import pandas as pd
+4 import numpy as np
+5 from datetime import datetime, timedelta
+6 from io import BytesIO
+
 
 # ────────────────────────────────────────────────────────────────────────────────
 # 1) Helper functions for LevelUp API integration and Social Mentions (Onclusive)
 # ────────────────────────────────────────────────────────────────────────────────
-
 def setup_levelup_headers(api_key: str) -> dict:
     return {
         "accept": "application/json",
@@ -17,93 +17,78 @@ def setup_levelup_headers(api_key: str) -> dict:
 
 def generate_levelup_metrics_for_event(event: dict, headers: dict) -> dict:
     """
-    Fetch video and stream metrics from LevelUp for the given event.
-    Returns a dictionary with 'videos' and 'streams' DataFrames.
+    Fetch 7-day baseline & 7-day actual Video Views & Stream Hours
+    from LevelUp, using the same endpoints as your ETL script.
     """
-    base_url = "https://api.levelup.example.com/v1/metrics"  # 🔁 Replace with actual base URL
-
-    brand_id = event["brandId"]
-    region = event["region"]
+    base_url   = "https://www.levelup-analytics.com/api/client/v1"  # ← your real base URL
+    brand_id   = event["brandId"]
+    region     = event["region"]
     event_date = event["date"].date()
 
-    # Define time windows
-    baseline_start = (event_date - timedelta(days=7)).strftime("%Y-%m-%d")
-    baseline_end = (event_date - timedelta(days=1)).strftime("%Y-%m-%d")
-    actual_start = event_date.strftime("%Y-%m-%d")
-    actual_end = (event_date + timedelta(days=6)).strftime("%Y-%m-%d")
+    windows = {
+        "baseline": (
+            (event_date - timedelta(days=7)).strftime("%Y-%m-%d"),
+            (event_date - timedelta(days=1)).strftime("%Y-%m-%d"),
+        ),
+        "actual": (
+            event_date.strftime("%Y-%m-%d"),
+            (event_date + timedelta(days=6)).strftime("%Y-%m-%d"),
+        ),
+    }
 
-    def fetch_metrics(metric_type: str, start_date: str, end_date: str) -> pd.DataFrame:
-        url = f"{base_url}/{metric_type}"
-        params = {
-            "brandId": brand_id,
-            "region": region,
-            "startDate": start_date,
-            "endDate": end_date,
-        }
+    def fetch_metrics(metric: str, start: str, end: str, period: str) -> pd.DataFrame:
+        url    = f"{base_url}/{metric}/statsEvolution/brand/{brand_id}"
+        params = {"from": start, "to": end, "brandid": brand_id, "region": region}
         try:
-            response = requests.get(url, headers=headers, params=params)
-            response.raise_for_status()
-            data = response.json()
-            df = pd.DataFrame(data)
-            df["period"] = "baseline" if start_date == baseline_start else "actual"
+            r = requests.get(url, headers=headers, params=params)
+            r.raise_for_status()
+            df = pd.DataFrame(r.json().get("data", []))
+            if not df.empty:
+                df["period"] = period
             return df
         except Exception as e:
-            print(f"⚠️ Error fetching {metric_type}: {e}")
+            print(f"⚠️ Error fetching {metric} ({period}): {e}")
             return pd.DataFrame()
 
-    videos_df = pd.concat([
-        fetch_metrics("videos", baseline_start, baseline_end),
-        fetch_metrics("videos", actual_start, actual_end)
-    ], ignore_index=True)
+    videos = [fetch_metrics("videos", s, e, p) for p, (s, e) in windows.items()]
+    streams = [fetch_metrics("streams", s, e, p) for p, (s, e) in windows.items()]
 
-    streams_df = pd.concat([
-        fetch_metrics("streams", baseline_start, baseline_end),
-        fetch_metrics("streams", actual_start, actual_end)
-    ], ignore_index=True)
+    return {"videos": pd.concat(videos, ignore_index=True),
+            "streams": pd.concat(streams, ignore_index=True)}
 
-    return {"videos": videos_df, "streams": streams_df}
+def compute_three_month_average(
+    headers: dict,
+    brand_id: int,
+    region: str,
+    event_date: datetime,
+    metric: str,
+) -> float:
+    """
+    Compute the 12-week average for 'videos' or 'streams'
+    over the 90 days before the event.
+    """
+    base_url   = "https://www.levelup-analytics.com/api/client/v1"  # ← and here
+    end_date   = (event_date - timedelta(days=1)).strftime("%Y-%m-%d")
+    start_date = (event_date - timedelta(days=90)).strftime("%Y-%m-%d")
+
+    url    = f"{base_url}/{metric}/statsEvolution/brand/{brand_id}"
+    params = {"from": start_date, "to": end_date, "brandid": brand_id, "region": region}
+
+    try:
+        r = requests.get(url, headers=headers, params=params)
+        r.raise_for_status()
+        df = pd.DataFrame(r.json().get("data", []))
+        if df.empty:
+            return 0.0
+        if metric == "videos":
+            return df["views"].sum() / 12
+        col = "hoursWatched" if "hoursWatched" in df.columns else "watchTime"
+        return df[col].sum() / 12
+    except Exception as e:
+        print(f"⚠️ Error computing 3-month avg for {metric}: {e}")
+        return 0.0
 
 
-import streamlit as st
-import requests
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-from io import BytesIO
-
-# ────────────────────────────────────────────────────────────────────────────────
-# 1) Helper functions for LevelUp API integration and Social Mentions (Onclusive)
-# ────────────────────────────────────────────────────────────────────────────────
-
-def setup_levelup_headers(api_key: str) -> dict:
-    return {
-        "accept": "application/json",
-        "X-API-KEY": api_key
-    }
-
-# [Other helper functions unchanged: fetch_levelup_data, generate_levelup_metrics_for_event,
-# compute_three_month_average, fetch_social_mentions_count]
-
-# ────────────────────────────────────────────────────────────────────────────────
-import streamlit as st
-import requests
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-from io import BytesIO
-
-# ────────────────────────────────────────────────────────────────────────────────
-# 1) Helper functions for LevelUp API integration and Social Mentions (Onclusive)
-# ────────────────────────────────────────────────────────────────────────────────
-
-def setup_levelup_headers(api_key: str) -> dict:
-    return {
-        "accept": "application/json",
-        "X-API-KEY": api_key
-    }
-
-# [Other helper functions unchanged: fetch_levelup_data, generate_levelup_metrics_for_event,
-# compute_three_month_average, fetch_social_mentions_count]
 
 # ────────────────────────────────────────────────────────────────────────────────
 # 2) Streamlit app configuration and sidebar
