@@ -1,10 +1,9 @@
-1 import streamlit as st
-2 import requests
-3 import pandas as pd
-4 import numpy as np
-5 from datetime import datetime, timedelta
-6 from io import BytesIO
-
+import streamlit as st
+import requests
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+from io import BytesIO
 
 # ────────────────────────────────────────────────────────────────────────────────
 # 1) Helper functions for LevelUp API integration and Social Mentions (Onclusive)
@@ -88,11 +87,10 @@ def compute_three_month_average(
         print(f"⚠️ Error computing 3-month avg for {metric}: {e}")
         return 0.0
 
-
-
 # ────────────────────────────────────────────────────────────────────────────────
 # 2) Streamlit app configuration and sidebar
 # ────────────────────────────────────────────────────────────────────────────────
+
 
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
