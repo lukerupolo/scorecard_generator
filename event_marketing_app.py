@@ -15,8 +15,54 @@ def setup_levelup_headers(api_key: str) -> dict:
         "X-API-KEY": api_key
     }
 
-# [Other helper functions unchanged: fetch_levelup_data, generate_levelup_metrics_for_event,
-# compute_three_month_average, fetch_social_mentions_count]
+def generate_levelup_metrics_for_event(event: dict, headers: dict) -> dict:
+    """
+    Fetch video and stream metrics from LevelUp for the given event.
+    Returns a dictionary with 'videos' and 'streams' DataFrames.
+    """
+    base_url = "https://api.levelup.example.com/v1/metrics"  # 🔁 Replace with actual base URL
+
+    brand_id = event["brandId"]
+    region = event["region"]
+    event_date = event["date"].date()
+
+    # Define time windows
+    baseline_start = (event_date - timedelta(days=7)).strftime("%Y-%m-%d")
+    baseline_end = (event_date - timedelta(days=1)).strftime("%Y-%m-%d")
+    actual_start = event_date.strftime("%Y-%m-%d")
+    actual_end = (event_date + timedelta(days=6)).strftime("%Y-%m-%d")
+
+    def fetch_metrics(metric_type: str, start_date: str, end_date: str) -> pd.DataFrame:
+        url = f"{base_url}/{metric_type}"
+        params = {
+            "brandId": brand_id,
+            "region": region,
+            "startDate": start_date,
+            "endDate": end_date,
+        }
+        try:
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+            df = pd.DataFrame(data)
+            df["period"] = "baseline" if start_date == baseline_start else "actual"
+            return df
+        except Exception as e:
+            print(f"⚠️ Error fetching {metric_type}: {e}")
+            return pd.DataFrame()
+
+    videos_df = pd.concat([
+        fetch_metrics("videos", baseline_start, baseline_end),
+        fetch_metrics("videos", actual_start, actual_end)
+    ], ignore_index=True)
+
+    streams_df = pd.concat([
+        fetch_metrics("streams", baseline_start, baseline_end),
+        fetch_metrics("streams", actual_start, actual_end)
+    ], ignore_index=True)
+
+    return {"videos": videos_df, "streams": streams_df}
+
 
 import streamlit as st
 import requests
