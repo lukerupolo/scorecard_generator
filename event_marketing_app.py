@@ -357,6 +357,8 @@ if "sheets_dict" not in st.session_state:
     st.session_state["sheets_dict"] = {}
 
 # ────────────────────────────────────────────────────────────────────────────────
+
+# ────────────────────────────────────────────────────────────────────────────────
 # 8) Main: Generate Scorecard
 # ────────────────────────────────────────────────────────────────────────────────
 
@@ -398,21 +400,18 @@ if st.button("✅ Generate Scorecard"):
         fetched = {}
         if needs_levelup and not (manual_levelup_inputs and idx in manual_levelup_inputs):
             fetched = generate_levelup_metrics_for_event(ev, api_headers)
+
             if DEBUG:
-    st.sidebar.markdown(f"**Raw ‘videos’ Data for {ev['name']}**")
-    st.sidebar.write(fetched["videos"])                   # see every row
-    sum_views = fetched["videos"]["views"].sum()
-    st.sidebar.write("→ sum of views:", sum_views)
+                st.sidebar.markdown(f"**Raw 'videos' Data for {ev['name']}**")
+                st.sidebar.write(fetched["videos"])
+                sum_views = fetched["videos"]["views"].sum()
+                st.sidebar.write("→ sum of views:", sum_views)
 
-    st.sidebar.markdown(f"**Raw ‘streams’ Data for {ev['name']}**")
-    st.sidebar.write(fetched["streams"])
-    sum_hours = (
-        fetched["streams"].get("hoursWatched", 
-            fetched["streams"].get("watchTime", pd.Series())
-        ).sum()
-    )
-    st.sidebar.write("→ sum of hours watched:", sum_hours)
-
+                st.sidebar.markdown(f"**Raw 'streams' Data for {ev['name']}**")
+                st.sidebar.write(fetched["streams"])
+                hours_col = "hoursWatched" if "hoursWatched" in fetched["streams"].columns else "watchTime"
+                sum_hours = fetched["streams"][hours_col].sum()
+                st.sidebar.write("→ sum of hours watched:", sum_hours)
 
         rows_for_event: list[dict[str, object]] = []
         for metric_name in metrics:
@@ -458,18 +457,13 @@ if st.button("✅ Generate Scorecard"):
                     row[actual_label]   = act_vv
                 else:
                     vid_df = fetched.get("videos", pd.DataFrame())
-                    if (
-                        not vid_df.empty
-                        and "period" in vid_df.columns
-                        and "views" in vid_df.columns
-                    ):
+                    if not vid_df.empty and "period" in vid_df.columns and "views" in vid_df.columns:
                         bv = vid_df[vid_df["period"] == "baseline"]["views"].sum()
                         av = vid_df[vid_df["period"] == "actual"]["views"].sum()
                     else:
                         bv, av = 0, 0
                     row[baseline_label] = bv
                     row[actual_label]   = av
-
                 avg_vv = compute_three_month_average(
                     api_headers, ev["brandId"], ev["region"], ev_date, "videos"
                 )
@@ -483,10 +477,8 @@ if st.button("✅ Generate Scorecard"):
                     row[actual_label]   = act_hw
                 else:
                     str_df = fetched.get("streams", pd.DataFrame())
-                    if (
-                        not str_df.empty
-                        and "period" in str_df.columns
-                        and ("hoursWatched" in str_df.columns or "watchTime" in str_df.columns)
+                    if not str_df.empty and "period" in str_df.columns and (
+                        "hoursWatched" in str_df.columns or "watchTime" in str_df.columns
                     ):
                         col_name = "hoursWatched" if "hoursWatched" in str_df.columns else "watchTime"
                         bh = str_df[str_df["period"] == "baseline"][col_name].sum()
@@ -495,7 +487,6 @@ if st.button("✅ Generate Scorecard"):
                         bh, ah = 0, 0
                     row[baseline_label] = bh
                     row[actual_label]   = ah
-
                 avg_hw = compute_three_month_average(
                     api_headers, ev["brandId"], ev["region"], ev_date, "streams"
                 )
@@ -509,18 +500,17 @@ if st.button("✅ Generate Scorecard"):
             rows_for_event.append(row)
 
         df_event = pd.DataFrame(rows_for_event).set_index("Metric")
-
         st.markdown(
             f"### Event {idx+1}: {ev['name']}  \n"
             f"**Date:** {ev['date'].date():%Y-%m-%d}  |  **Region:** {ev['region']}"
         )
         st.dataframe(df_event)
-
         sheets_dict[ev["name"][:28] or f"Event{idx+1}"] = df_event.reset_index()
 
     # Save to session_state so we can re-use it for Proposed Benchmark
     st.session_state["sheets_dict"] = sheets_dict
     st.session_state["scorecard_ready"] = True
+
 
 # ────────────────────────────────────────────────────────────────────────────────
 # 9) If scorecard was generated, show the “Generate Proposed Benchmark” button
