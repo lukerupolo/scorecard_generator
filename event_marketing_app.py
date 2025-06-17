@@ -18,13 +18,12 @@ from openpyxl.styles import Font, PatternFill, Alignment
 # ================================================================================
 # VERSION CONTROL TO FORCE CACHE RESET
 # ================================================================================
-APP_VERSION = "2.0" # Change this number to force a reset on update
+APP_VERSION = "3.0" # Change this number to force a reset on update
 
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
 # --- Initialize or Reset session state ---
 if st.session_state.get('app_version') != APP_VERSION:
-    # Clear all session state variables if version is different
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.session_state['app_version'] = APP_VERSION
@@ -40,47 +39,60 @@ if "presentation_buffer" not in st.session_state:
     st.session_state["presentation_buffer"] = None
 # ================================================================================
 
+def create_default_style():
+    """Creates a default style dictionary for fallback."""
+    return {
+        "colors": {
+            "primary": RGBColor(79, 129, 189), "accent": RGBColor(192, 80, 77),
+            "text_dark": RGBColor(38, 38, 38), "text_light": RGBColor(255, 255, 255),
+            "background_alt": RGBColor(242, 242, 242),
+        },
+        "fonts": {"heading": "Arial", "body": "Calibri"},
+        "font_sizes": {
+            "title": Pt(36), "subtitle": Pt(24), "body": Pt(12),
+            "table_header": Pt(11), "table_body": Pt(10),
+        }
+    }
 
 def extract_style_from_upload(uploaded_file):
     """
-    Analyzes an in-memory .pptx file and returns its style guide.
+    Analyzes an in-memory .pptx file. Falls back to a default if the theme is missing.
     """
     try:
         file_stream = BytesIO(uploaded_file.getvalue())
         prs = Presentation(file_stream)
         
-        color_scheme = prs.theme.theme_elements.clr_scheme
-        color_map = {
-            'accent1': 'primary', 'accent2': 'accent', 'dk1': 'text_dark',
-            'lt1': 'text_light', 'accent3': 'accent3', 'accent4': 'accent4'
-        }
-        extracted_colors = {}
-        for name, key in color_map.items():
-            color_obj = getattr(color_scheme, name)
-            if hasattr(color_obj, 'rgb'):
-                extracted_colors[key] = color_obj.rgb
-        
-        extracted_colors.setdefault('background_alt', RGBColor(242, 242, 242))
+        # --- NEW: Try to access the theme, but handle the error if it's missing ---
+        try:
+            color_scheme = prs.theme.theme_elements.clr_scheme
+            font_scheme = prs.theme.theme_elements.font_scheme
 
-        font_scheme = prs.theme.theme_elements.font_scheme
-        fonts = {
-            "heading": font_scheme.major_font.latin or "Arial",
-            "body": font_scheme.minor_font.latin or "Calibri",
-        }
+            color_map = {'accent1': 'primary', 'accent2': 'accent', 'dk1': 'text_dark', 'lt1': 'text_light'}
+            extracted_colors = {key: getattr(color_scheme, name).rgb for name, key in color_map.items() if hasattr(getattr(color_scheme, name), 'rgb')}
+            extracted_colors.setdefault('background_alt', RGBColor(242, 242, 242))
 
-        font_sizes = {
-            "title": Pt(36), "subtitle": Pt(24), "body": Pt(12),
-            "table_header": Pt(11), "table_body": Pt(10),
-        }
-        
+            fonts = {
+                "heading": font_scheme.major_font.latin or "Arial",
+                "body": font_scheme.minor_font.latin or "Calibri",
+            }
+            st.success(f"Successfully extracted color & font theme from '{uploaded_file.name}'!")
+
+        except AttributeError:
+            st.warning("Could not find a standard theme in the presentation. Using a default style for colors and fonts, but your slide layouts will still be used.")
+            default_style = create_default_style()
+            extracted_colors = default_style['colors']
+            fonts = default_style['fonts']
+
+        # --- Assemble the Brand Style Dictionary ---
         brand_style = {
-            "colors": extracted_colors, "fonts": fonts, "font_sizes": font_sizes,
+            "colors": extracted_colors,
+            "fonts": fonts,
+            "font_sizes": create_default_style()['font_sizes'], # Use consistent font sizes
         }
-        st.success(f"Successfully extracted style from '{uploaded_file.name}'!")
         return brand_style
 
     except Exception as e:
-        st.error(f"Could not read or parse the presentation file. Please try another file. Error: {e}")
+        st.error(f"Could not read or parse the presentation file. It may be corrupt or not a standard .pptx file. Error: {e}")
         return None
 
 st.title("Event Marketing Scorecard & Presentation Generator")
@@ -110,7 +122,6 @@ if st.session_state.style_uploaded:
     DEBUG = st.sidebar.checkbox("🔍 Show LevelUp raw data")
     
     st.sidebar.markdown("## 📅 Event Configuration")
-    n_events = st.sidebar.number_input("Number of events", min_value=1, max_value=10, value=1, step=1)
     # ... (Your full sidebar UI code for events and metrics goes here) ...
     
     # For demonstration, we'll create dummy data
@@ -122,8 +133,9 @@ if st.session_state.style_uploaded:
         })
         st.session_state["sheets_dict"] = {"Dummy Event": dummy_df}
     
-    # (Your PowerPoint and Excel styling functions go here. Omitted for brevity.)
+    # (Your PowerPoint and Excel styling functions go here. Omitted for brevity, but they use 'style_guide'.)
     def apply_table_style_pptx(table, style_guide):
+        # ... (implementation remains the same)
         primary_color = style_guide["colors"].get("primary", RGBColor(0,0,0))
         text_light_color = style_guide["colors"].get("text_light", RGBColor(255,255,255))
         alt_bg_color = style_guide["colors"].get("background_alt", RGBColor(240,240,240))
@@ -153,23 +165,37 @@ if st.session_state.style_uploaded:
                 p.font.size = body_font_size
                 p.font.color.rgb = text_dark_color
 
+
     def add_df_to_slide(prs, df, slide_title, style_guide):
-        slide_layout = prs.slide_layouts[5]
+        slide_layout = prs.slide_layouts[5] # Blank Layout
         slide = prs.slides.add_slide(slide_layout)
+        
+        # Add a title textbox
+        title_shape = slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(9), Inches(0.8))
+        p = title_shape.text_frame.paragraphs[0]
+        p.text = slide_title
+        p.font.name = style_guide['fonts']['heading']
+        p.font.size = Pt(28)
+        p.font.color.rgb = style_guide['colors']['text_dark']
+
+        # Add the table
         rows, cols = df.shape
         table = slide.shapes.add_table(rows + 1, cols, Inches(0.5), Inches(1.2), Inches(9), Inches(0.8)).table
+        
+        # Populate and style table
         for i, col_name in enumerate(df.columns):
             table.cell(0, i).text = col_name
         for r in range(rows):
             for c in range(cols):
                 table.cell(r + 1, c).text = str(df.iloc[r, c])
         apply_table_style_pptx(table, style_guide)
+
     
-    st.header("Step 2: Generate Scorecard Data")
+    st.header("Step 2: Scorecard Data")
     st.dataframe(st.session_state["sheets_dict"]["Dummy Event"])
 
     st.header("Step 3: Create Your Presentation")
-    if st.session_state.presentation_buffer:
+    if st.session_state.get("presentation_buffer"):
         st.download_button(
             label="✅ Download Your Presentation!",
             data=st.session_state.presentation_buffer,
@@ -182,11 +208,6 @@ if st.session_state.style_uploaded:
         ppt_title = st.text_input("Presentation Title", "Game Scorecard")
         ppt_subtitle = st.text_input("Presentation Subtitle", "A detailed analysis")
         
-        scorecard_moments = st.multiselect(
-            "Select Scorecard Moments for Timeline",
-            options=["Pre-Reveal", "Reveal", "Pre-Order", "Launch", "Post-Launch"],
-            default=["Pre-Reveal", "Reveal", "Launch"]
-        )
         submitted = st.form_submit_button("Generate Presentation")
 
         if submitted:
@@ -194,28 +215,20 @@ if st.session_state.style_uploaded:
             prs = Presentation(template_stream)
             style_guide = st.session_state.brand_style
 
+            # Add title slide
             title_slide_layout = prs.slide_layouts[0]
             slide = prs.slides.add_slide(title_slide_layout)
-            try:
-                slide.shapes.title.text = ppt_title
-                slide.placeholders[1].text = ppt_subtitle
-            except KeyError:
-                st.warning("Could not find standard title/subtitle placeholders in the template. Skipping.")
+            slide.shapes.title.text = ppt_title
+            slide.placeholders[1].text = ppt_subtitle
 
-            for moment in scorecard_moments:
-                moment_title_layout = prs.slide_layouts[1]
-                slide = prs.slides.add_slide(moment_title_layout)
-                try:
-                    slide.shapes.title.text = f"Scorecard: {moment}"
-                except KeyError:
-                    pass
-
-                for sheet_name, scorecard_df in st.session_state["sheets_dict"].items():
-                    if sheet_name.lower() != "benchmark":
-                        add_df_to_slide(prs, scorecard_df, f"{moment} Metrics: {sheet_name}", style_guide)
+            # Add data table slide
+            for sheet_name, scorecard_df in st.session_state["sheets_dict"].items():
+                if sheet_name.lower() != "benchmark":
+                    add_df_to_slide(prs, scorecard_df, f"Metrics: {sheet_name}", style_guide)
 
             ppt_buffer = BytesIO()
             prs.save(ppt_buffer)
             ppt_buffer.seek(0)
             st.session_state["presentation_buffer"] = ppt_buffer
             st.rerun()
+
