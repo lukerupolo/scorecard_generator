@@ -287,4 +287,3 @@ if st.session_state.get('show_ppt_creator'):
                         ppt_buffer.seek(0)
                         st.session_state["presentation_buffer"] = ppt_buffer
                         st.rerun()
-
