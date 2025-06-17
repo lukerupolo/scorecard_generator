@@ -629,19 +629,13 @@ if st.session_state.get("scorecard_ready", False):
 # ────────────────────────────────────────────────────────────────────────────────
 # 11) PowerPoint Generation Functions
 # ────────────────────────────────────────────────────────────────────────────────
-def add_title_slide(prs, title_text, subtitle_text, image_stream):
+def add_title_slide(prs, title_text, subtitle_text):
     slide_layout = prs.slide_layouts[0]
     slide = prs.slides.add_slide(slide_layout)
     title = slide.shapes.title
     subtitle = slide.placeholders[1]
     title.text = title_text
     subtitle.text = subtitle_text
-    if image_stream:
-        # Add image to the slide
-        left = Inches(6)
-        top = Inches(4)
-        height = Inches(3)
-        pic = slide.shapes.add_picture(image_stream, left, top, height=height)
 
 
 def add_timeline_slide(prs, timeline_moments):
@@ -722,8 +716,7 @@ if st.session_state.get('show_ppt_creator', False):
         st.subheader("Presentation Details")
         ppt_title = st.text_input("Presentation Title", "Game Scorecard")
         ppt_subtitle = st.text_input("Presentation Subtitle", "A detailed analysis")
-        uploaded_image = st.file_uploader("Upload a title slide image", type=["png", "jpg", "jpeg"])
-
+        
         scorecard_moments = st.multiselect(
             "Select Scorecard Moments for Timeline",
             options=["Pre-Reveal", "Reveal", "Pre-Order", "Launch", "Post-Launch"],
@@ -739,8 +732,7 @@ if st.session_state.get('show_ppt_creator', False):
                 prs = Presentation()
 
                 # Slide 1: Title Slide
-                image_stream = BytesIO(uploaded_image.read()) if uploaded_image else None
-                add_title_slide(prs, ppt_title, ppt_subtitle, image_stream)
+                add_title_slide(prs, ppt_title, ppt_subtitle)
 
                 # Slide 2: Timeline
                 add_timeline_slide(prs, scorecard_moments)
