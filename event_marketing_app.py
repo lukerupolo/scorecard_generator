@@ -4,6 +4,13 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from io import BytesIO
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN
+import matplotlib.pyplot as plt
+
+
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 DEBUG = st.sidebar.checkbox("🔍 Show LevelUp raw data")
 
@@ -354,6 +361,9 @@ if "scorecard_ready" not in st.session_state:
     st.session_state["scorecard_ready"] = False
 if "sheets_dict" not in st.session_state:
     st.session_state["sheets_dict"] = {}
+if "presentation_buffer" not in st.session_state:
+    st.session_state["presentation_buffer"] = None
+
 
 # ────────────────────────────────────────────────────────────────────────────────
 
@@ -501,7 +511,7 @@ if st.button("✅ Generate Scorecard"):
         df_event = pd.DataFrame(rows_for_event).set_index("Metric")
         st.markdown(
             f"### Event {idx+1}: {ev['name']}  \n"
-            f"**Date:** {ev['date'].date():%Y-%m-%d}  |  **Region:** {ev['region']}"
+            f"**Date:** {ev['date'].date():%Y-%m-%d}  |   **Region:** {ev['region']}"
         )
         st.dataframe(df_event)
         sheets_dict[ev["name"][:28] or f"Event{idx+1}"] = df_event.reset_index()
@@ -597,9 +607,6 @@ if st.session_state.get("scorecard_ready", False):
 # 10) Download Excel (always present, includes “Benchmark” sheet if generated)
 # ────────────────────────────────────────────────────────────────────────────────
 
-from io import BytesIO
-import pandas as pd
-
 if st.session_state.get("scorecard_ready", False):
     sheets_dict = st.session_state["sheets_dict"]
     
@@ -617,4 +624,148 @@ if st.session_state.get("scorecard_ready", False):
         data=buffer,
         file_name="event_marketing_scorecard.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 11) PowerPoint Generation Functions
+# ────────────────────────────────────────────────────────────────────────────────
+def add_title_slide(prs, title_text, subtitle_text, image_stream):
+    slide_layout = prs.slide_layouts[0]
+    slide = prs.slides.add_slide(slide_layout)
+    title = slide.shapes.title
+    subtitle = slide.placeholders[1]
+    title.text = title_text
+    subtitle.text = subtitle_text
+    if image_stream:
+        # Add image to the slide
+        left = Inches(6)
+        top = Inches(4)
+        height = Inches(3)
+        pic = slide.shapes.add_picture(image_stream, left, top, height=height)
+
+
+def add_timeline_slide(prs, timeline_moments):
+    slide_layout = prs.slide_layouts[5]  # Blank slide layout
+    slide = prs.slides.add_slide(slide_layout)
+    title_shape = slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(9), Inches(1))
+    title_shape.text = "Scorecard Moments Timeline"
+    title_shape.text_frame.paragraphs[0].font.size = Pt(32)
+
+    if not timeline_moments:
+        return
+
+    # Create a timeline plot
+    fig, ax = plt.subplots(figsize=(10, 2))
+    ax.set_ylim(-1, 1)
+    ax.set_xlim(0, len(timeline_moments) + 1)
+    ax.axhline(0, color='black', xmin=0.05, xmax=0.95)
+
+    for i, moment in enumerate(timeline_moments):
+        ax.plot(i + 1, 0, 'o', markersize=15, color='blue')
+        ax.text(i + 1, -0.2, moment, ha='center', fontsize=12)
+
+    ax.axis('off')
+
+    # Save plot to a BytesIO object
+    plot_stream = BytesIO()
+    plt.savefig(plot_stream, format='png', bbox_inches='tight', pad_inches=0.1)
+    plt.close(fig)
+    plot_stream.seek(0)
+
+    # Add the plot to the slide
+    slide.shapes.add_picture(plot_stream, Inches(0.5), Inches(1.5), width=Inches(9))
+
+def add_moment_title_slide(prs, title_text):
+    slide_layout = prs.slide_layouts[1] # Title and Content
+    slide = prs.slides.add_slide(slide_layout)
+    title = slide.shapes.title
+    title.text = title_text
+
+
+def add_df_to_slide(prs, df, slide_title):
+    slide_layout = prs.slide_layouts[5] # Blank slide layout
+    slide = prs.slides.add_slide(slide_layout)
+    title_shape = slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(9), Inches(1))
+    title_shape.text = slide_title
+    title_shape.text_frame.paragraphs[0].font.size = Pt(24)
+
+
+    rows, cols = df.shape
+    left = Inches(1)
+    top = Inches(1.5)
+    width = Inches(8)
+    height = Inches(0.8)
+
+    table = slide.shapes.add_table(rows + 1, cols, left, top, width, height).table
+    table.columns[0].width = Inches(2.5)
+
+    # Add header row
+    for i, col_name in enumerate(df.columns):
+        table.cell(0, i).text = col_name
+        table.cell(0, i).text_frame.paragraphs[0].font.bold = True
+
+    # Add data rows
+    for r in range(rows):
+        for c in range(cols):
+            cell_value = df.iloc[r, c]
+            table.cell(r + 1, c).text = str(cell_value)
+
+# ────────────────────────────────────────────────────────────────────────────────
+# 12) Main: Generate PowerPoint Presentation
+# ────────────────────────────────────────────────────────────────────────────────
+if st.session_state.get("scorecard_ready", False):
+    if st.button("📊 Create a Game Scorecard Presentation"):
+        st.session_state['show_ppt_creator'] = True
+
+if st.session_state.get('show_ppt_creator', False):
+    with st.form("ppt_form"):
+        st.subheader("Presentation Details")
+        ppt_title = st.text_input("Presentation Title", "Game Scorecard")
+        ppt_subtitle = st.text_input("Presentation Subtitle", "A detailed analysis")
+        uploaded_image = st.file_uploader("Upload a title slide image", type=["png", "jpg", "jpeg"])
+
+        scorecard_moments = st.multiselect(
+            "Select Scorecard Moments for Timeline",
+            options=["Pre-Reveal", "Reveal", "Pre-Order", "Launch", "Post-Launch"],
+            default=["Pre-Reveal", "Reveal", "Launch"]
+        )
+
+        submitted = st.form_submit_button("Generate Presentation")
+
+        if submitted:
+            if not st.session_state["sheets_dict"]:
+                st.error("No scorecard data available to create a presentation.")
+            else:
+                prs = Presentation()
+
+                # Slide 1: Title Slide
+                image_stream = BytesIO(uploaded_image.read()) if uploaded_image else None
+                add_title_slide(prs, ppt_title, ppt_subtitle, image_stream)
+
+                # Slide 2: Timeline
+                add_timeline_slide(prs, scorecard_moments)
+                
+                # Subsequent slides for each scorecard moment
+                for moment in scorecard_moments:
+                    add_moment_title_slide(prs, f"Scorecard: {moment}")
+                    # You can customize which scorecard to show for each moment
+                    # For this example, we'll just insert the first available scorecard
+                    first_sheet_name = next(iter(st.session_state["sheets_dict"]))
+                    scorecard_df = st.session_state["sheets_dict"][first_sheet_name]
+                    add_df_to_slide(prs, scorecard_df.reset_index(), f"{moment} Metrics")
+
+
+                # Save presentation to a BytesIO object
+                ppt_buffer = BytesIO()
+                prs.save(ppt_buffer)
+                ppt_buffer.seek(0)
+                st.session_state["presentation_buffer"] = ppt_buffer
+                st.success("Presentation generated successfully!")
+
+if st.session_state["presentation_buffer"]:
+    st.download_button(
+        label="📥 Download PowerPoint Presentation",
+        data=st.session_state["presentation_buffer"],
+        file_name="game_scorecard_presentation.pptx",
+        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
     )
