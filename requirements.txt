@@ -4,3 +4,5 @@ numpy
 requests
 msal
 openpyxl
+python-pptx
+matplotlib
