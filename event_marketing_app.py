@@ -597,18 +597,24 @@ if st.session_state.get("scorecard_ready", False):
 # 10) Download Excel (always present, includes “Benchmark” sheet if generated)
 # ────────────────────────────────────────────────────────────────────────────────
 
+from io import BytesIO
+import pandas as pd
+
 if st.session_state.get("scorecard_ready", False):
     sheets_dict = st.session_state["sheets_dict"]
+    
+    # Write each DataFrame into its own sheet in an in-memory Excel workbook
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         for sheet_name, df_sheet in sheets_dict.items():
-            safe_name = sheet_name[:31]
+            safe_name = sheet_name[:31]  # Excel sheet names max out at 31 chars
             df_sheet.to_excel(writer, sheet_name=safe_name, index=False)
     buffer.seek(0)
-
+    
+    # Offer the workbook for download
     st.download_button(
         label="📥 Download Full Scorecard Workbook",
         data=buffer,
         file_name="event_marketing_scorecard.xlsx",
-        mime="application/vnd.openxmlformats-officedocument-spreadsheetml.sheet",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
