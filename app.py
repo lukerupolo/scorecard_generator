@@ -18,7 +18,7 @@ for key in ['scorecard_ready', 'show_ppt_creator', 'sheets_dict', 'presentation_
         st.session_state[key] = None if 'dict' in key or 'buffer' in key else False
 
 st.title("Event Marketing Scorecard & Presentation Generator")
-app_config = render_sidebar()
+app_config = render_sidebar() # This now returns the OpenAI key as well
 
 # ================================================================================
 # Main Page: Scorecard Generation
@@ -39,7 +39,6 @@ if st.session_state.scorecard_ready and st.session_state.sheets_dict:
     for name, df in st.session_state.sheets_dict.items():
         st.markdown(f"#### {name}"); st.dataframe(df, use_container_width=True)
     
-    # ... (Benchmark and Excel download logic remains the same) ...
     st.markdown("---")
     st.session_state['show_ppt_creator'] = True
 
@@ -61,19 +60,17 @@ if st.session_state.get('show_ppt_creator'):
         
         col1, col2 = st.columns(2)
         selected_style_name = col1.radio("Select Style Preset:", options=list(STYLE_PRESETS.keys()), horizontal=True)
-        
-        # NEW: Text input for the image generation region
         image_region_prompt = col2.text_input("Region for AI Background Image", "Brazil")
 
         ppt_title = st.text_input("Presentation Title", "Game Scorecard")
         ppt_subtitle = st.text_input("Presentation Subtitle", "A detailed analysis")
-        
-        moments_input = st.text_area("Scorecard Moments for Timeline (one per line)", "Pre-Reveal\nReveal\nLaunch", height=100)
-
+        moments_input = st.text_area("Scorecard Moments (one per line)", "Pre-Reveal\nLaunch", height=100)
         submitted = st.form_submit_button("Generate Presentation", use_container_width=True)
 
         if submitted:
-            if not st.session_state.get("sheets_dict"):
+            if not app_config.get('openai_api_key'):
+                st.error("Please enter your OpenAI API key in the sidebar to generate images.")
+            elif not st.session_state.get("sheets_dict"):
                 st.error("Please generate scorecard data first.")
             else:
                 with st.spinner(f"Building presentation with {selected_style_name} style..."):
@@ -86,7 +83,9 @@ if st.session_state.get('show_ppt_creator'):
                         scorecard_moments=scorecard_moments,
                         sheets_dict=st.session_state.sheets_dict,
                         style_guide=style_guide,
-                        region_prompt=image_region_prompt # Pass the new prompt
+                        region_prompt=image_region_prompt,
+                        # Pass the API key from the sidebar config
+                        openai_api_key=app_config['openai_api_key'] 
                     )
                     st.session_state["presentation_buffer"] = ppt_buffer
                     st.rerun()
