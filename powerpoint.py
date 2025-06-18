@@ -15,7 +15,8 @@ def create_presentation(title, subtitle, scorecard_moments, sheets_dict, style_g
     prs.slide_width = Inches(16)
     prs.slide_height = Inches(9)
 
-    add_title_slide(prs, title, subtitle, style_guide)
+    # Call the updated title slide function with the necessary arguments
+    add_title_slide(prs, title, subtitle, style_guide, region_prompt, openai_api_key)
     add_timeline_slide(prs, scorecard_moments, style_guide)
 
     total_moments = len(scorecard_moments)
@@ -25,7 +26,6 @@ def create_presentation(title, subtitle, scorecard_moments, sheets_dict, style_g
 
         for i, moment in enumerate(scorecard_moments):
             image_progress_bar.progress((i + 1) / total_moments, text=f"Generating image for '{moment}'...")
-            # Pass the presentation object 'prs' to get dimensions
             add_moment_title_slide(prs, f"SCORECARD:\n{moment.upper()}", style_guide, region_prompt, openai_api_key)
             for sheet_name, scorecard_df in sheets_dict.items():
                 if sheet_name.lower() != "benchmark":
@@ -39,11 +39,11 @@ def create_presentation(title, subtitle, scorecard_moments, sheets_dict, style_g
     return ppt_buffer
 
 # ================================================================================
-# AI Background Image Generation (Corrected Version)
+# AI Background Image Generation
 # ================================================================================
-def generate_and_add_background_image(slide, region, style_guide, api_key, slide_width, slide_height):
+def generate_and_add_background_image(slide, region, style_guide, api_key, slide_width, slide_height, prompt_detail="football culture"):
     """Generates an image using the OpenAI API and adds it as the slide background."""
-    prompt = f"Dark, gritty, artistic representation of football culture in {region}, cinematic, ultra-realistic photo, dramatic lighting, epic style"
+    prompt = f"Dark, gritty, artistic representation of {prompt_detail} in {region}, cinematic, ultra-realistic photo, dramatic lighting, epic style"
     
     if not api_key:
         st.warning("OpenAI API key is missing. Using a solid background.")
@@ -53,10 +53,7 @@ def generate_and_add_background_image(slide, region, style_guide, api_key, slide
 
     try:
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        payload = {
-            "model": "dall-e-3", "prompt": prompt, "n": 1,
-            "size": "1792x1024", "response_format": "url"
-        }
+        payload = {"model": "dall-e-3", "prompt": prompt, "n": 1, "size": "1792x1024", "response_format": "url"}
         
         api_url = "https://api.openai.com/v1/images/generations"
         response = requests.post(api_url, headers=headers, json=payload, timeout=45)
@@ -68,10 +65,8 @@ def generate_and_add_background_image(slide, region, style_guide, api_key, slide
         image_response.raise_for_status()
         image_stream = BytesIO(image_response.content)
 
-        # Add the picture to fill the entire slide using the passed dimensions
         pic = slide.shapes.add_picture(image_stream, Inches(0), Inches(0), width=slide_width, height=slide_height)
         
-        # Send the image to the back
         slide.shapes._spTree.remove(pic._element)
         slide.shapes._spTree.insert(2, pic._element)
 
@@ -83,21 +78,62 @@ def generate_and_add_background_image(slide, region, style_guide, api_key, slide
 # ================================================================================
 # Helper functions for slide creation and styling
 # ================================================================================
-def add_moment_title_slide(prs, title_text, style_guide, region, api_key):
-    """Creates a moment title slide, now passing prs dimensions."""
+def add_title_slide(prs, title_text, subtitle_text, style_guide, region, api_key):
+    """Adds a title slide with an AI-generated background."""
     slide = prs.slides.add_slide(prs.slide_layouts[5]) # Blank layout
-    # FIXED: Pass the correct slide dimensions to the image function
+    
+    # Generate a more generic background for the title slide
+    generate_and_add_background_image(slide, region, style_guide, api_key, prs.slide_width, prs.slide_height, prompt_detail="a cinematic football stadium")
+    
+    title_shape = slide.shapes.add_textbox(Inches(1), Inches(3), Inches(14), Inches(2))
+    p = title_shape.text_frame.paragraphs[0]; p.text = title_text.upper(); p.font.name = style_guide["fonts"]["heading"]; p.font.bold = True; p.font.size = style_guide["font_sizes"]["title"]; p.font.color.rgb = style_guide["colors"]["title_slide_text"]; p.alignment = PP_ALIGN.CENTER
+
+    subtitle_shape = slide.shapes.add_textbox(Inches(1), Inches(4.5), Inches(14), Inches(1.5))
+    p = subtitle_shape.text_frame.paragraphs[0]; p.text = subtitle_text; p.font.name = style_guide["fonts"]["body"]; p.font.size = style_guide["font_sizes"]["subtitle"]; p.font.color.rgb = style_guide["colors"]["title_slide_text"]; p.alignment = PP_ALIGN.CENTER
+
+def add_moment_title_slide(prs, title_text, style_guide, region, api_key):
+    slide = prs.slides.add_slide(prs.slide_layouts[5]) # Blank layout
     generate_and_add_background_image(slide, region, style_guide, api_key, prs.slide_width, prs.slide_height)
     
     txBox = slide.shapes.add_textbox(Inches(1), Inches(3.5), Inches(14), Inches(3))
     p = txBox.text_frame.paragraphs[0]; p.text = title_text; p.font.name = style_guide["fonts"]["heading"]; p.font.bold = True; p.font.size = style_guide["font_sizes"]["moment_title"]; p.font.color.rgb = style_guide["colors"]["title_slide_text"]; p.alignment = PP_ALIGN.CENTER
 
-# --- Other helper functions (unchanged) ---
+def add_timeline_slide(prs, timeline_moments, style_guide):
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    slide.background.fill.solid(); slide.background.fill.fore_color.rgb = style_guide["colors"]["content_slide_bg"]
+    
+    title_shape = slide.shapes.add_textbox(Inches(1), Inches(0.5), Inches(14), Inches(1.5))
+    p = title_shape.text_frame.paragraphs[0]; p.text = "TIMELINE"; p.font.name = style_guide["fonts"]["heading"]; p.font.bold = True; p.font.size = style_guide["font_sizes"]["title"]; p.font.color.rgb = style_guide["colors"]["content_heading_text"]; p.alignment = PP_ALIGN.CENTER
+
+    if not timeline_moments: return
+    
+    # Create the plot
+    fig, ax = plt.subplots(figsize=(14, 2))
+    fig.patch.set_facecolor(f'#{style_guide["colors"]["content_slide_bg"]}')
+    ax.set_facecolor(f'#{style_guide["colors"]["content_slide_bg"]}')
+    ax.axhline(0, color=f'#{style_guide["colors"]["content_body_text"]}', xmin=0.05, xmax=0.95, zorder=1)
+    
+    for i, moment in enumerate(timeline_moments):
+        ax.plot(i + 1, 0, 'o', markersize=20, color=f'#{style_guide["colors"]["content_heading_text"]}', zorder=2)
+        ax.text(i + 1, -0.5, moment.upper(), ha='center', fontsize=14, fontname=style_guide["fonts"]["body"], color=f'#{style_guide["colors"]["content_body_text"]}', va='top')
+    
+    ax.axis('off')
+    
+    # Adjust layout to prevent labels from being cut off
+    plt.tight_layout(pad=0.5)
+    
+    # Save the plot to a buffer
+    plot_stream = BytesIO()
+    # FIXED: Saving with transparent=False ensures the text renders correctly.
+    plt.savefig(plot_stream, format='png', bbox_inches='tight', facecolor=fig.get_facecolor(), transparent=False)
+    plt.close(fig)
+    plot_stream.seek(0)
+    
+    slide.shapes.add_picture(plot_stream, Inches(1), Inches(3), width=Inches(14))
+
 def apply_table_style_pptx(table, style_guide):
-    header_bg = style_guide["colors"]["table_header_bg"]
-    header_text = style_guide["colors"]["table_header_text"]
-    body_text = style_guide["colors"]["content_body_text"]
-    alt_bg = style_guide["colors"]["table_alt_row_bg"]
+    header_bg, header_text = style_guide["colors"]["table_header_bg"], style_guide["colors"]["table_header_text"]
+    body_text, alt_bg = style_guide["colors"]["content_body_text"], style_guide["colors"]["table_alt_row_bg"]
     heading_font, body_font = style_guide["fonts"]["heading"], style_guide["fonts"]["body"]
     header_fs, body_fs = style_guide["font_sizes"]["table_header"], style_guide["font_sizes"]["table_body"]
     
@@ -111,32 +147,6 @@ def apply_table_style_pptx(table, style_guide):
             for cell in row.cells: cell.fill.solid(); cell.fill.fore_color.rgb = alt_bg
         for cell in row.cells:
             p = cell.text_frame.paragraphs[0]; p.font.name = body_font; p.font.size = body_fs; p.font.color.rgb = body_text
-
-def add_title_slide(prs, title_text, subtitle_text, style_guide):
-    slide = prs.slides.add_slide(prs.slide_layouts[5]) # Blank layout
-    slide.background.fill.solid(); slide.background.fill.fore_color.rgb = style_guide["colors"]["title_slide_bg"]
-    
-    title_shape = slide.shapes.add_textbox(Inches(1), Inches(3), Inches(14), Inches(2))
-    p = title_shape.text_frame.paragraphs[0]; p.text = title_text.upper(); p.font.name = style_guide["fonts"]["heading"]; p.font.bold = True; p.font.size = style_guide["font_sizes"]["title"]; p.font.color.rgb = style_guide["colors"]["title_slide_text"]; p.alignment = PP_ALIGN.CENTER
-
-    subtitle_shape = slide.shapes.add_textbox(Inches(1), Inches(4.5), Inches(14), Inches(1.5))
-    p = subtitle_shape.text_frame.paragraphs[0]; p.text = subtitle_text; p.font.name = style_guide["fonts"]["body"]; p.font.size = style_guide["font_sizes"]["subtitle"]; p.font.color.rgb = style_guide["colors"]["title_slide_text"]; p.alignment = PP_ALIGN.CENTER
-
-def add_timeline_slide(prs, timeline_moments, style_guide):
-    slide = prs.slides.add_slide(prs.slide_layouts[5])
-    slide.background.fill.solid(); slide.background.fill.fore_color.rgb = style_guide["colors"]["content_slide_bg"]
-    
-    title_shape = slide.shapes.add_textbox(Inches(1), Inches(0.5), Inches(14), Inches(1.5))
-    p = title_shape.text_frame.paragraphs[0]; p.text = "TIMELINE"; p.font.name = style_guide["fonts"]["heading"]; p.font.bold = True; p.font.size = style_guide["font_sizes"]["title"]; p.font.color.rgb = style_guide["colors"]["content_heading_text"]; p.alignment = PP_ALIGN.CENTER
-
-    if not timeline_moments: return
-    fig, ax = plt.subplots(figsize=(14, 2)); fig.patch.set_facecolor(f'#{style_guide["colors"]["content_slide_bg"]}'); ax.set_facecolor(f'#{style_guide["colors"]["content_slide_bg"]}')
-    ax.axhline(0, color=f'#{style_guide["colors"]["content_body_text"]}', xmin=0.05, xmax=0.95, zorder=1)
-    for i, moment in enumerate(timeline_moments):
-        ax.plot(i + 1, 0, 'o', markersize=20, color=f'#{style_guide["colors"]["content_heading_text"]}', zorder=2)
-        ax.text(i + 1, -0.4, moment.upper(), ha='center', fontsize=14, fontname=style_guide["fonts"]["body"], color=f'#{style_guide["colors"]["content_body_text"]}')
-    ax.axis('off'); plot_stream = BytesIO(); plt.savefig(plot_stream, format='png', bbox_inches='tight', transparent=True); plt.close(fig); plot_stream.seek(0)
-    slide.shapes.add_picture(plot_stream, Inches(1), Inches(3), width=Inches(14))
 
 def add_df_to_slide(prs, df, slide_title, style_guide):
     slide = prs.slides.add_slide(prs.slide_layouts[5])
