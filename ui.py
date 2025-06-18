@@ -5,6 +5,17 @@ def render_sidebar():
     """Renders the sidebar UI and returns a dictionary of configurations."""
     config = {}
     with st.sidebar:
+        st.markdown("## ⚙️ App Configuration")
+        
+        # NEW: Input for OpenAI API Key
+        config['openai_api_key'] = st.text_input(
+            "🔑 OpenAI API Key", 
+            type="password",
+            help="Your key for generating images with DALL-E."
+        )
+
+        st.markdown("---")
+        
         config['debug'] = st.checkbox("🔍 Show LevelUp raw data")
         st.markdown("## 📅 Event Configuration")
         game_options = {"EA Sports FC25": 3136, "FIFA 25": 3140, "Madden NFL 25": 3150, "NHL 25": 3160}
@@ -28,15 +39,4 @@ def render_sidebar():
         if custom_metric := st.text_input("✍️ Add Custom Metric", key="custom_metric_input"): metrics.append(custom_metric)
         config['metrics'] = metrics
 
-        # Authentication sections
-        config['manual_social_inputs'] = {}
-        if "Social Mentions" in metrics:
-            st.markdown("## 💬 Social Mentions (Onclusive)")
-            # ... (Full social auth logic)
-        
-        config['manual_levelup_inputs'] = {}
-        if any(m in ["Video Views (VOD)", "Hours Watched (Streams)"] for m in metrics):
-            st.markdown("## 🎮 LevelUp API")
-            # ... (Full LevelUp auth logic)
-            
     return config
