@@ -3,14 +3,13 @@ from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
 from io import BytesIO
 import matplotlib.pyplot as plt
-import base64
 import requests 
-import streamlit as st # Import Streamlit to show error messages
+import streamlit as st
 
 # ================================================================================
 # Main Presentation Creation Function
 # ================================================================================
-def create_presentation(title, subtitle, scorecard_moments, sheets_dict, style_guide, region_prompt):
+def create_presentation(title, subtitle, scorecard_moments, sheets_dict, style_guide, region_prompt, openai_api_key):
     """Creates and returns a PowerPoint presentation as a BytesIO buffer."""
     prs = Presentation()
     prs.slide_width = Inches(16)
@@ -19,7 +18,6 @@ def create_presentation(title, subtitle, scorecard_moments, sheets_dict, style_g
     add_title_slide(prs, title, subtitle, style_guide)
     add_timeline_slide(prs, scorecard_moments, style_guide)
 
-    # Use a progress bar for the image generation
     total_moments = len(scorecard_moments)
     if total_moments > 0:
         progress_text = "Generating AI background images... (This can take a moment)"
@@ -27,73 +25,90 @@ def create_presentation(title, subtitle, scorecard_moments, sheets_dict, style_g
 
         for i, moment in enumerate(scorecard_moments):
             image_progress_bar.progress((i + 1) / total_moments, text=f"Generating image for '{moment}'...")
-            add_moment_title_slide(prs, f"SCORECARD:\n{moment.upper()}", style_guide, region_prompt)
+            # Pass the API key to the image generation function
+            add_moment_title_slide(prs, f"SCORECARD:\n{moment.upper()}", style_guide, region_prompt, openai_api_key)
             for sheet_name, scorecard_df in sheets_dict.items():
                 if sheet_name.lower() != "benchmark":
                     add_df_to_slide(prs, scorecard_df, f"{moment.upper()} METRICS: {sheet_name.upper()}", style_guide)
         
-        image_progress_bar.empty() # Clear the progress bar
+        image_progress_bar.empty()
 
-    # Save to an in-memory buffer
     ppt_buffer = BytesIO()
     prs.save(ppt_buffer)
     ppt_buffer.seek(0)
     return ppt_buffer
 
 # ================================================================================
-# NEW: AI Background Image Generation with Gemini API (Robust Version)
+# NEW: Background Image Generation using OpenAI's DALL-E 3
 # ================================================================================
-def generate_and_add_background_image(slide, region, style_guide):
-    """Generates an image using the Gemini API and adds it as the slide background."""
+def generate_and_add_background_image(slide, region, style_guide, api_key):
+    """Generates an image using the OpenAI API and adds it as the slide background."""
     prompt = f"Dark, gritty, artistic representation of football culture in {region}, cinematic, ultra-realistic photo, dramatic lighting, epic style"
     
+    if not api_key:
+        st.warning("OpenAI API key is missing. Using a solid background.")
+        slide.background.fill.solid()
+        slide.background.fill.fore_color.rgb = style_guide["colors"]["title_slide_bg"]
+        return
+
     try:
-        api_key = "" # This is handled by the execution environment
-        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key={api_key}"
-        payload = {"instances": [{"prompt": prompt}], "parameters": {"sampleCount": 1}}
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "dall-e-3",
+            "prompt": prompt,
+            "n": 1,
+            "size": "1792x1024", # Widescreen aspect ratio for slides
+            "response_format": "url" # Get a temporary URL to the image
+        }
         
-        # Make the API call with a timeout
-        response = requests.post(api_url, json=payload, timeout=30)
-        response.raise_for_status() # Raise an exception for bad status codes (like 4xx or 5xx)
+        api_url = "https://api.openai.com/v1/images/generations"
+        response = requests.post(api_url, headers=headers, json=payload, timeout=45)
+        response.raise_for_status()
         
         result = response.json()
+        image_url = result['data'][0]['url']
         
-        if result.get("predictions") and result["predictions"][0].get("bytesBase64Encoded"):
-            image_b64 = result["predictions"][0]["bytesBase64Encoded"]
-            image_bytes = base64.b64decode(image_b64)
-            image_stream = BytesIO(image_bytes)
+        # Download the image from the URL
+        image_response = requests.get(image_url, timeout=15)
+        image_response.raise_for_status()
+        image_stream = BytesIO(image_response.content)
 
-            left = top = Inches(0)
-            pic = slide.shapes.add_picture(image_stream, left, top, width=slide.part.presentation.slide_width, height=slide.part.presentation.slide_height)
-            
-            # Send the image to the back to act as a background
-            slide.shapes._spTree.remove(pic._element)
-            slide.shapes._spTree.insert(2, pic._element)
-            return
-        else:
-            # If the API returns a success code but no image, show a warning
-            st.warning(f"Image generation for '{region}' succeeded, but the response contained no image data. This may be due to safety filters. A solid background will be used instead.")
-            raise ValueError("API response did not contain image data.")
+        # Add the picture to fill the entire slide
+        left = top = Inches(0)
+        pic = slide.shapes.add_picture(
+            image_stream, left, top, 
+            width=slide.part.presentation.slide_width, 
+            height=slide.part.presentation.slide_height
+        )
+        
+        # Send the image to the back
+        slide.shapes._spTree.remove(pic._element)
+        slide.shapes._spTree.insert(2, pic._element)
 
-    except requests.exceptions.Timeout:
-        st.warning(f"Image generation for '{region}' timed out. A solid background will be used instead.")
     except requests.exceptions.RequestException as e:
-        # For other errors (like connection errors or bad status codes), show an error
-        st.error(f"Image generation for '{region}' failed due to a network or API error: {e}. A solid background will be used.")
-    except Exception as e:
-        # For any other unexpected errors
-        st.error(f"An unexpected error occurred during image generation for '{region}': {e}. A solid background will be used.")
-
-    # --- Fallback to solid color background if any error occurs ---
-    slide.background.fill.solid()
-    slide.background.fill.fore_color.rgb = style_guide["colors"]["title_slide_bg"]
+        st.error(f"Image generation for '{region}' failed: {e}. Check your API key and network connection. Using a solid background.")
+        slide.background.fill.solid()
+        slide.background.fill.fore_color.rgb = style_guide["colors"]["title_slide_bg"]
 
 # ================================================================================
 # Helper functions for slide creation and styling
 # ================================================================================
+def add_moment_title_slide(prs, title_text, style_guide, region, api_key):
+    slide = prs.slides.add_slide(prs.slide_layouts[5]) # Blank layout
+    generate_and_add_background_image(slide, region, style_guide, api_key)
+    
+    txBox = slide.shapes.add_textbox(Inches(1), Inches(3.5), Inches(14), Inches(3))
+    p = txBox.text_frame.paragraphs[0]; p.text = title_text; p.font.name = style_guide["fonts"]["heading"]; p.font.bold = True; p.font.size = style_guide["font_sizes"]["moment_title"]; p.font.color.rgb = style_guide["colors"]["title_slide_text"]; p.alignment = PP_ALIGN.CENTER
+    # ... The rest of the helper functions (add_title_slide, add_df_to_slide, etc.) remain the same
+# ... (Omitted for brevity, they are unchanged from the previous version)
 def apply_table_style_pptx(table, style_guide):
-    header_bg, header_text = style_guide["colors"]["table_header_bg"], style_guide["colors"]["table_header_text"]
-    body_text, alt_bg = style_guide["colors"]["content_body_text"], style_guide["colors"]["table_alt_row_bg"]
+    header_bg = style_guide["colors"]["table_header_bg"]
+    header_text = style_guide["colors"]["table_header_text"]
+    body_text = style_guide["colors"]["content_body_text"]
+    alt_bg = style_guide["colors"]["table_alt_row_bg"]
     heading_font, body_font = style_guide["fonts"]["heading"], style_guide["fonts"]["body"]
     header_fs, body_fs = style_guide["font_sizes"]["table_header"], style_guide["font_sizes"]["table_body"]
     
@@ -117,13 +132,6 @@ def add_title_slide(prs, title_text, subtitle_text, style_guide):
 
     subtitle_shape = slide.shapes.add_textbox(Inches(1), Inches(4.5), Inches(14), Inches(1.5))
     p = subtitle_shape.text_frame.paragraphs[0]; p.text = subtitle_text; p.font.name = style_guide["fonts"]["body"]; p.font.size = style_guide["font_sizes"]["subtitle"]; p.font.color.rgb = style_guide["colors"]["title_slide_text"]; p.alignment = PP_ALIGN.CENTER
-
-def add_moment_title_slide(prs, title_text, style_guide, region):
-    slide = prs.slides.add_slide(prs.slide_layouts[5]) # Blank layout
-    generate_and_add_background_image(slide, region, style_guide)
-    
-    txBox = slide.shapes.add_textbox(Inches(1), Inches(3.5), Inches(14), Inches(3))
-    p = txBox.text_frame.paragraphs[0]; p.text = title_text; p.font.name = style_guide["fonts"]["heading"]; p.font.bold = True; p.font.size = style_guide["font_sizes"]["moment_title"]; p.font.color.rgb = style_guide["colors"]["title_slide_text"]; p.alignment = PP_ALIGN.CENTER
 
 def add_timeline_slide(prs, timeline_moments, style_guide):
     slide = prs.slides.add_slide(prs.slide_layouts[5])
