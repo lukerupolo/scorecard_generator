@@ -25,7 +25,7 @@ def create_presentation(title, subtitle, scorecard_moments, sheets_dict, style_g
 
         for i, moment in enumerate(scorecard_moments):
             image_progress_bar.progress((i + 1) / total_moments, text=f"Generating image for '{moment}'...")
-            # Pass the API key to the image generation function
+            # Pass the presentation object 'prs' to get dimensions
             add_moment_title_slide(prs, f"SCORECARD:\n{moment.upper()}", style_guide, region_prompt, openai_api_key)
             for sheet_name, scorecard_df in sheets_dict.items():
                 if sheet_name.lower() != "benchmark":
@@ -39,9 +39,9 @@ def create_presentation(title, subtitle, scorecard_moments, sheets_dict, style_g
     return ppt_buffer
 
 # ================================================================================
-# NEW: Background Image Generation using OpenAI's DALL-E 3
+# AI Background Image Generation (Corrected Version)
 # ================================================================================
-def generate_and_add_background_image(slide, region, style_guide, api_key):
+def generate_and_add_background_image(slide, region, style_guide, api_key, slide_width, slide_height):
     """Generates an image using the OpenAI API and adds it as the slide background."""
     prompt = f"Dark, gritty, artistic representation of football culture in {region}, cinematic, ultra-realistic photo, dramatic lighting, epic style"
     
@@ -52,44 +52,31 @@ def generate_and_add_background_image(slide, region, style_guide, api_key):
         return
 
     try:
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         payload = {
-            "model": "dall-e-3",
-            "prompt": prompt,
-            "n": 1,
-            "size": "1792x1024", # Widescreen aspect ratio for slides
-            "response_format": "url" # Get a temporary URL to the image
+            "model": "dall-e-3", "prompt": prompt, "n": 1,
+            "size": "1792x1024", "response_format": "url"
         }
         
         api_url = "https://api.openai.com/v1/images/generations"
         response = requests.post(api_url, headers=headers, json=payload, timeout=45)
         response.raise_for_status()
         
-        result = response.json()
-        image_url = result['data'][0]['url']
+        image_url = response.json()['data'][0]['url']
         
-        # Download the image from the URL
         image_response = requests.get(image_url, timeout=15)
         image_response.raise_for_status()
         image_stream = BytesIO(image_response.content)
 
-        # Add the picture to fill the entire slide
-        left = top = Inches(0)
-        pic = slide.shapes.add_picture(
-            image_stream, left, top, 
-            width=slide.part.presentation.slide_width, 
-            height=slide.part.presentation.slide_height
-        )
+        # Add the picture to fill the entire slide using the passed dimensions
+        pic = slide.shapes.add_picture(image_stream, Inches(0), Inches(0), width=slide_width, height=slide_height)
         
         # Send the image to the back
         slide.shapes._spTree.remove(pic._element)
         slide.shapes._spTree.insert(2, pic._element)
 
     except requests.exceptions.RequestException as e:
-        st.error(f"Image generation for '{region}' failed: {e}. Check your API key and network connection. Using a solid background.")
+        st.error(f"Image generation for '{region}' failed: {e}. Check your API key. Using a solid background.")
         slide.background.fill.solid()
         slide.background.fill.fore_color.rgb = style_guide["colors"]["title_slide_bg"]
 
@@ -97,13 +84,15 @@ def generate_and_add_background_image(slide, region, style_guide, api_key):
 # Helper functions for slide creation and styling
 # ================================================================================
 def add_moment_title_slide(prs, title_text, style_guide, region, api_key):
+    """Creates a moment title slide, now passing prs dimensions."""
     slide = prs.slides.add_slide(prs.slide_layouts[5]) # Blank layout
-    generate_and_add_background_image(slide, region, style_guide, api_key)
+    # FIXED: Pass the correct slide dimensions to the image function
+    generate_and_add_background_image(slide, region, style_guide, api_key, prs.slide_width, prs.slide_height)
     
     txBox = slide.shapes.add_textbox(Inches(1), Inches(3.5), Inches(14), Inches(3))
     p = txBox.text_frame.paragraphs[0]; p.text = title_text; p.font.name = style_guide["fonts"]["heading"]; p.font.bold = True; p.font.size = style_guide["font_sizes"]["moment_title"]; p.font.color.rgb = style_guide["colors"]["title_slide_text"]; p.alignment = PP_ALIGN.CENTER
-    # ... The rest of the helper functions (add_title_slide, add_df_to_slide, etc.) remain the same
-# ... (Omitted for brevity, they are unchanged from the previous version)
+
+# --- Other helper functions (unchanged) ---
 def apply_table_style_pptx(table, style_guide):
     header_bg = style_guide["colors"]["table_header_bg"]
     header_text = style_guide["colors"]["table_header_text"]
