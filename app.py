@@ -1,8 +1,8 @@
 import streamlit as st
 from io import BytesIO
 
-# --- Local Imports from our new files ---
-from style import BRAND_STYLE
+# --- Local Imports from our other files ---
+from style import STYLE_PRESETS # Import the dictionary of presets
 from ui import render_sidebar
 from data_processing import process_scorecard_data
 from powerpoint import create_presentation
@@ -26,8 +26,6 @@ st.title("Event Marketing Scorecard & Presentation Generator")
 # ================================================================================
 # 2) Sidebar & Input Configuration
 # ================================================================================
-# The render_sidebar function from ui.py now handles all sidebar logic
-# and returns the user's configurations.
 app_config = render_sidebar()
 
 # ================================================================================
@@ -36,7 +34,6 @@ app_config = render_sidebar()
 st.header("Step 1: Generate Scorecard Data")
 if st.button("✅ Generate Scorecard Data", use_container_width=True):
     with st.spinner("Fetching data and building scorecards..."):
-        # The processing logic is now in its own function
         sheets_dict = process_scorecard_data(app_config)
         st.session_state["sheets_dict"] = sheets_dict
         st.session_state["scorecard_ready"] = True
@@ -56,7 +53,6 @@ if st.session_state.scorecard_ready and st.session_state.sheets_dict:
         st.info("Benchmark logic would run here to update sheets_dict.")
 
     if st.session_state.sheets_dict:
-        # Excel creation is now in its own function
         excel_buffer = create_excel_workbook(st.session_state.sheets_dict)
         col2.download_button(
             label="📥 Download as Excel Workbook",
@@ -83,28 +79,45 @@ if st.session_state.get('show_ppt_creator'):
         )
 
     with st.form("ppt_form"):
-        st.subheader("Presentation Details")
+        st.subheader("Presentation Style & Details")
+        
+        # NEW: Radio buttons to select the style preset
+        selected_style_name = st.radio(
+            "Select Presentation Style:",
+            options=list(STYLE_PRESETS.keys()),
+            horizontal=True,
+            key="style_selector"
+        )
+        
         ppt_title = st.text_input("Presentation Title", "Game Scorecard")
         ppt_subtitle = st.text_input("Presentation Subtitle", "A detailed analysis")
-        scorecard_moments = st.multiselect(
-            "Select Scorecard Moments for Timeline",
-            options=["Pre-Reveal", "Reveal", "Pre-Order", "Launch"],
-            default=["Pre-Reveal", "Launch"]
+        
+        # NEW: Text area for custom timeline moments
+        moments_input = st.text_area(
+            "Scorecard Moments for Timeline (one per line)",
+            "Pre-Reveal\nReveal\nLaunch\nPost-Launch",
+            height=100
         )
+
         submitted = st.form_submit_button("Generate Presentation", use_container_width=True)
 
         if submitted:
             if not st.session_state.get("sheets_dict"):
                 st.error("Please generate scorecard data first.")
             else:
-                with st.spinner("Building presentation with dark mode style..."):
-                    # The presentation creation is now in its own function
+                with st.spinner(f"Building presentation with {selected_style_name} style..."):
+                    # Get the selected style dictionary
+                    style_guide = STYLE_PRESETS[selected_style_name]
+                    
+                    # Parse the custom moments from the text area
+                    scorecard_moments = [moment.strip() for moment in moments_input.split('\n') if moment.strip()]
+
                     ppt_buffer = create_presentation(
                         title=ppt_title,
                         subtitle=ppt_subtitle,
                         scorecard_moments=scorecard_moments,
                         sheets_dict=st.session_state.sheets_dict,
-                        style_guide=BRAND_STYLE
+                        style_guide=style_guide
                     )
                     st.session_state["presentation_buffer"] = ppt_buffer
                     st.rerun()
