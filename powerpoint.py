@@ -15,7 +15,6 @@ def create_presentation(title, subtitle, scorecard_moments, sheets_dict, style_g
     prs.slide_width = Inches(16)
     prs.slide_height = Inches(9)
 
-    # Call the updated title slide function with the necessary arguments
     add_title_slide(prs, title, subtitle, style_guide, region_prompt, openai_api_key)
     add_timeline_slide(prs, scorecard_moments, style_guide)
 
@@ -47,42 +46,34 @@ def generate_and_add_background_image(slide, region, style_guide, api_key, slide
     
     if not api_key:
         st.warning("OpenAI API key is missing. Using a solid background.")
-        slide.background.fill.solid()
-        slide.background.fill.fore_color.rgb = style_guide["colors"]["title_slide_bg"]
+        slide.background.fill.solid(); slide.background.fill.fore_color.rgb = style_guide["colors"]["title_slide_bg"]
         return
 
     try:
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         payload = {"model": "dall-e-3", "prompt": prompt, "n": 1, "size": "1792x1024", "response_format": "url"}
-        
         api_url = "https://api.openai.com/v1/images/generations"
+        
         response = requests.post(api_url, headers=headers, json=payload, timeout=45)
         response.raise_for_status()
         
         image_url = response.json()['data'][0]['url']
-        
-        image_response = requests.get(image_url, timeout=15)
-        image_response.raise_for_status()
+        image_response = requests.get(image_url, timeout=15); image_response.raise_for_status()
         image_stream = BytesIO(image_response.content)
 
         pic = slide.shapes.add_picture(image_stream, Inches(0), Inches(0), width=slide_width, height=slide_height)
-        
         slide.shapes._spTree.remove(pic._element)
         slide.shapes._spTree.insert(2, pic._element)
 
     except requests.exceptions.RequestException as e:
-        st.error(f"Image generation for '{region}' failed: {e}. Check your API key. Using a solid background.")
-        slide.background.fill.solid()
-        slide.background.fill.fore_color.rgb = style_guide["colors"]["title_slide_bg"]
+        st.error(f"Image generation for '{region}' failed: {e}. Using a solid background.")
+        slide.background.fill.solid(); slide.background.fill.fore_color.rgb = style_guide["colors"]["title_slide_bg"]
 
 # ================================================================================
 # Helper functions for slide creation and styling
 # ================================================================================
 def add_title_slide(prs, title_text, subtitle_text, style_guide, region, api_key):
-    """Adds a title slide with an AI-generated background."""
-    slide = prs.slides.add_slide(prs.slide_layouts[5]) # Blank layout
-    
-    # Generate a more generic background for the title slide
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
     generate_and_add_background_image(slide, region, style_guide, api_key, prs.slide_width, prs.slide_height, prompt_detail="a cinematic football stadium")
     
     title_shape = slide.shapes.add_textbox(Inches(1), Inches(3), Inches(14), Inches(2))
@@ -92,7 +83,7 @@ def add_title_slide(prs, title_text, subtitle_text, style_guide, region, api_key
     p = subtitle_shape.text_frame.paragraphs[0]; p.text = subtitle_text; p.font.name = style_guide["fonts"]["body"]; p.font.size = style_guide["font_sizes"]["subtitle"]; p.font.color.rgb = style_guide["colors"]["title_slide_text"]; p.alignment = PP_ALIGN.CENTER
 
 def add_moment_title_slide(prs, title_text, style_guide, region, api_key):
-    slide = prs.slides.add_slide(prs.slide_layouts[5]) # Blank layout
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
     generate_and_add_background_image(slide, region, style_guide, api_key, prs.slide_width, prs.slide_height)
     
     txBox = slide.shapes.add_textbox(Inches(1), Inches(3.5), Inches(14), Inches(3))
@@ -107,25 +98,31 @@ def add_timeline_slide(prs, timeline_moments, style_guide):
 
     if not timeline_moments: return
     
-    # Create the plot
-    fig, ax = plt.subplots(figsize=(14, 2))
+    fig, ax = plt.subplots(figsize=(14, 2.5)) # Increased height slightly
     fig.patch.set_facecolor(f'#{style_guide["colors"]["content_slide_bg"]}')
     ax.set_facecolor(f'#{style_guide["colors"]["content_slide_bg"]}')
-    ax.axhline(0, color=f'#{style_guide["colors"]["content_body_text"]}', xmin=0.05, xmax=0.95, zorder=1)
+    ax.axhline(0, color=f'#{style_guide["colors"]["content_body_text"]}', xmin=0.05, xmax=0.95, zorder=1, linewidth=2)
     
     for i, moment in enumerate(timeline_moments):
         ax.plot(i + 1, 0, 'o', markersize=20, color=f'#{style_guide["colors"]["content_heading_text"]}', zorder=2)
-        ax.text(i + 1, -0.5, moment.upper(), ha='center', fontsize=14, fontname=style_guide["fonts"]["body"], color=f'#{style_guide["colors"]["content_body_text"]}', va='top')
+        
+        # --- FIXED TEXT RENDERING ---
+        # 1. Use a standard 'sans-serif' font for compatibility.
+        # 2. Add a semi-transparent background box to ensure text is always visible.
+        text_props = dict(boxstyle='round,pad=0.4', facecolor='black', alpha=0.5, edgecolor='none')
+        ax.text(
+            x=i + 1, y=-0.2, s=moment.upper(),
+            ha='center', va='top', fontsize=14,
+            fontname='sans-serif', # Use a safe, standard font
+            color=f'#{style_guide["colors"]["content_body_text"]}', # White text
+            bbox=text_props
+        )
+        # --- END FIX ---
     
     ax.axis('off')
-    
-    # Adjust layout to prevent labels from being cut off
-    plt.tight_layout(pad=0.5)
-    
-    # Save the plot to a buffer
+    plt.tight_layout(pad=0)
     plot_stream = BytesIO()
-    # FIXED: Saving with transparent=False ensures the text renders correctly.
-    plt.savefig(plot_stream, format='png', bbox_inches='tight', facecolor=fig.get_facecolor(), transparent=False)
+    plt.savefig(plot_stream, format='png', facecolor=fig.get_facecolor(), transparent=False)
     plt.close(fig)
     plot_stream.seek(0)
     
