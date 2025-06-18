@@ -4,8 +4,8 @@ from pptx.enum.text import PP_ALIGN
 from io import BytesIO
 import matplotlib.pyplot as plt
 import base64
-import requests # Needed for API calls
-import streamlit as st # To show progress
+import requests 
+import streamlit as st # Import Streamlit to show error messages
 
 # ================================================================================
 # Main Presentation Creation Function
@@ -20,22 +20,19 @@ def create_presentation(title, subtitle, scorecard_moments, sheets_dict, style_g
     add_timeline_slide(prs, scorecard_moments, style_guide)
 
     # Use a progress bar for the image generation
-    progress_text = "Generating AI background images... (This can take a moment)"
-    image_progress_bar = st.progress(0, text=progress_text)
     total_moments = len(scorecard_moments)
+    if total_moments > 0:
+        progress_text = "Generating AI background images... (This can take a moment)"
+        image_progress_bar = st.progress(0, text=progress_text)
 
-    for i, moment in enumerate(scorecard_moments):
-        # Pass the region_prompt for image generation
-        add_moment_title_slide(prs, f"SCORECARD:\n{moment.upper()}", style_guide, region_prompt)
+        for i, moment in enumerate(scorecard_moments):
+            image_progress_bar.progress((i + 1) / total_moments, text=f"Generating image for '{moment}'...")
+            add_moment_title_slide(prs, f"SCORECARD:\n{moment.upper()}", style_guide, region_prompt)
+            for sheet_name, scorecard_df in sheets_dict.items():
+                if sheet_name.lower() != "benchmark":
+                    add_df_to_slide(prs, scorecard_df, f"{moment.upper()} METRICS: {sheet_name.upper()}", style_guide)
         
-        # Update progress bar
-        image_progress_bar.progress((i + 1) / total_moments, text=f"Generating image for '{moment}'...")
-
-        for sheet_name, scorecard_df in sheets_dict.items():
-            if sheet_name.lower() != "benchmark":
-                add_df_to_slide(prs, scorecard_df, f"{moment.upper()} METRICS: {sheet_name.upper()}", style_guide)
-    
-    image_progress_bar.empty() # Clear the progress bar
+        image_progress_bar.empty() # Clear the progress bar
 
     # Save to an in-memory buffer
     ppt_buffer = BytesIO()
@@ -44,23 +41,20 @@ def create_presentation(title, subtitle, scorecard_moments, sheets_dict, style_g
     return ppt_buffer
 
 # ================================================================================
-# NEW: AI Background Image Generation with Gemini API
+# NEW: AI Background Image Generation with Gemini API (Robust Version)
 # ================================================================================
 def generate_and_add_background_image(slide, region, style_guide):
     """Generates an image using the Gemini API and adds it as the slide background."""
     prompt = f"Dark, gritty, artistic representation of football culture in {region}, cinematic, ultra-realistic photo, dramatic lighting, epic style"
     
     try:
-        # --- Gemini API Call ---
-        api_key = "" # API key is handled by the execution environment
+        api_key = "" # This is handled by the execution environment
         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key={api_key}"
-        payload = {
-            "instances": [{"prompt": prompt}],
-            "parameters": {"sampleCount": 1}
-        }
+        payload = {"instances": [{"prompt": prompt}], "parameters": {"sampleCount": 1}}
         
-        response = requests.post(api_url, json=payload)
-        response.raise_for_status() # Raise an exception for bad status codes
+        # Make the API call with a timeout
+        response = requests.post(api_url, json=payload, timeout=30)
+        response.raise_for_status() # Raise an exception for bad status codes (like 4xx or 5xx)
         
         result = response.json()
         
@@ -69,7 +63,6 @@ def generate_and_add_background_image(slide, region, style_guide):
             image_bytes = base64.b64decode(image_b64)
             image_stream = BytesIO(image_bytes)
 
-            # Add the picture to fill the entire slide
             left = top = Inches(0)
             pic = slide.shapes.add_picture(image_stream, left, top, width=slide.part.presentation.slide_width, height=slide.part.presentation.slide_height)
             
@@ -78,23 +71,29 @@ def generate_and_add_background_image(slide, region, style_guide):
             slide.shapes._spTree.insert(2, pic._element)
             return
         else:
-            print("API response did not contain image data. Falling back to solid color.")
-            raise ValueError("Invalid API response")
+            # If the API returns a success code but no image, show a warning
+            st.warning(f"Image generation for '{region}' succeeded, but the response contained no image data. This may be due to safety filters. A solid background will be used instead.")
+            raise ValueError("API response did not contain image data.")
 
+    except requests.exceptions.Timeout:
+        st.warning(f"Image generation for '{region}' timed out. A solid background will be used instead.")
+    except requests.exceptions.RequestException as e:
+        # For other errors (like connection errors or bad status codes), show an error
+        st.error(f"Image generation for '{region}' failed due to a network or API error: {e}. A solid background will be used.")
     except Exception as e:
-        print(f"Image generation failed: {e}. Falling back to solid color background.")
-        # Fallback to black background if API call fails
-        slide.background.fill.solid()
-        slide.background.fill.fore_color.rgb = style_guide["colors"]["title_slide_bg"]
+        # For any other unexpected errors
+        st.error(f"An unexpected error occurred during image generation for '{region}': {e}. A solid background will be used.")
+
+    # --- Fallback to solid color background if any error occurs ---
+    slide.background.fill.solid()
+    slide.background.fill.fore_color.rgb = style_guide["colors"]["title_slide_bg"]
 
 # ================================================================================
 # Helper functions for slide creation and styling
 # ================================================================================
 def apply_table_style_pptx(table, style_guide):
-    header_bg = style_guide["colors"]["table_header_bg"]
-    header_text = style_guide["colors"]["table_header_text"]
-    body_text = style_guide["colors"]["content_body_text"]
-    alt_bg = style_guide["colors"]["table_alt_row_bg"]
+    header_bg, header_text = style_guide["colors"]["table_header_bg"], style_guide["colors"]["table_header_text"]
+    body_text, alt_bg = style_guide["colors"]["content_body_text"], style_guide["colors"]["table_alt_row_bg"]
     heading_font, body_font = style_guide["fonts"]["heading"], style_guide["fonts"]["body"]
     header_fs, body_fs = style_guide["font_sizes"]["table_header"], style_guide["font_sizes"]["table_body"]
     
@@ -111,8 +110,7 @@ def apply_table_style_pptx(table, style_guide):
 
 def add_title_slide(prs, title_text, subtitle_text, style_guide):
     slide = prs.slides.add_slide(prs.slide_layouts[5]) # Blank layout
-    slide.background.fill.solid()
-    slide.background.fill.fore_color.rgb = style_guide["colors"]["title_slide_bg"]
+    slide.background.fill.solid(); slide.background.fill.fore_color.rgb = style_guide["colors"]["title_slide_bg"]
     
     title_shape = slide.shapes.add_textbox(Inches(1), Inches(3), Inches(14), Inches(2))
     p = title_shape.text_frame.paragraphs[0]; p.text = title_text.upper(); p.font.name = style_guide["fonts"]["heading"]; p.font.bold = True; p.font.size = style_guide["font_sizes"]["title"]; p.font.color.rgb = style_guide["colors"]["title_slide_text"]; p.alignment = PP_ALIGN.CENTER
@@ -129,8 +127,7 @@ def add_moment_title_slide(prs, title_text, style_guide, region):
 
 def add_timeline_slide(prs, timeline_moments, style_guide):
     slide = prs.slides.add_slide(prs.slide_layouts[5])
-    slide.background.fill.solid()
-    slide.background.fill.fore_color.rgb = style_guide["colors"]["content_slide_bg"]
+    slide.background.fill.solid(); slide.background.fill.fore_color.rgb = style_guide["colors"]["content_slide_bg"]
     
     title_shape = slide.shapes.add_textbox(Inches(1), Inches(0.5), Inches(14), Inches(1.5))
     p = title_shape.text_frame.paragraphs[0]; p.text = "TIMELINE"; p.font.name = style_guide["fonts"]["heading"]; p.font.bold = True; p.font.size = style_guide["font_sizes"]["title"]; p.font.color.rgb = style_guide["colors"]["content_heading_text"]; p.alignment = PP_ALIGN.CENTER
@@ -146,8 +143,7 @@ def add_timeline_slide(prs, timeline_moments, style_guide):
 
 def add_df_to_slide(prs, df, slide_title, style_guide):
     slide = prs.slides.add_slide(prs.slide_layouts[5])
-    slide.background.fill.solid()
-    slide.background.fill.fore_color.rgb = style_guide["colors"]["content_slide_bg"]
+    slide.background.fill.solid(); slide.background.fill.fore_color.rgb = style_guide["colors"]["content_slide_bg"]
     
     title_shape = slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(15), Inches(1))
     p = title_shape.text_frame.paragraphs[0]; p.text = slide_title; p.font.name = style_guide['fonts']['heading']; p.font.size = style_guide['font_sizes']['content_title']; p.font.color.rgb = style_guide['colors'].get("content_heading_text")
