@@ -98,35 +98,32 @@ def add_timeline_slide(prs, timeline_moments, style_guide):
 
     if not timeline_moments: return
     
-    fig, ax = plt.subplots(figsize=(14, 2.5)) # Increased height slightly
+    # --- FIXED TIMELINE GENERATION ---
+    fig, ax = plt.subplots(figsize=(14, 2)) # Use a standard figure size
     fig.patch.set_facecolor(f'#{style_guide["colors"]["content_slide_bg"]}')
     ax.set_facecolor(f'#{style_guide["colors"]["content_slide_bg"]}')
-    ax.axhline(0, color=f'#{style_guide["colors"]["content_body_text"]}', xmin=0.05, xmax=0.95, zorder=1, linewidth=2)
+    ax.axhline(0, color=f'#{style_guide["colors"]["content_body_text"]}', xmin=0.05, xmax=0.95, zorder=1, linewidth=1.5)
     
     for i, moment in enumerate(timeline_moments):
-        ax.plot(i + 1, 0, 'o', markersize=20, color=f'#{style_guide["colors"]["content_heading_text"]}', zorder=2)
-        
-        # --- FIXED TEXT RENDERING ---
-        # 1. Use a standard 'sans-serif' font for compatibility.
-        # 2. Add a semi-transparent background box to ensure text is always visible.
-        text_props = dict(boxstyle='round,pad=0.4', facecolor='black', alpha=0.5, edgecolor='none')
+        ax.plot(i + 1, 0, 'o', markersize=15, color=f'#{style_guide["colors"]["content_heading_text"]}', zorder=2)
         ax.text(
-            x=i + 1, y=-0.2, s=moment.upper(),
-            ha='center', va='top', fontsize=14,
-            fontname='sans-serif', # Use a safe, standard font
-            color=f'#{style_guide["colors"]["content_body_text"]}', # White text
-            bbox=text_props
+            x=i + 1, y=-0.1, s=moment.upper(),
+            ha='center', va='top', fontsize=12,
+            fontname='sans-serif', # A safe font
+            color=f'#{style_guide["colors"]["content_body_text"]}',
+            weight='bold'
         )
-        # --- END FIX ---
     
+    ax.set_ylim(-0.5, 0.5) # Give text more vertical space
     ax.axis('off')
-    plt.tight_layout(pad=0)
+    
     plot_stream = BytesIO()
-    plt.savefig(plot_stream, format='png', facecolor=fig.get_facecolor(), transparent=False)
+    # Use bbox_inches='tight' to ensure nothing is cut off when saving
+    plt.savefig(plot_stream, format='png', bbox_inches='tight', pad_inches=0.1, facecolor=fig.get_facecolor(), transparent=False)
     plt.close(fig)
     plot_stream.seek(0)
     
-    slide.shapes.add_picture(plot_stream, Inches(1), Inches(3), width=Inches(14))
+    slide.shapes.add_picture(plot_stream, Inches(1), Inches(3.5), width=Inches(14))
 
 def apply_table_style_pptx(table, style_guide):
     header_bg, header_text = style_guide["colors"]["table_header_bg"], style_guide["colors"]["table_header_text"]
