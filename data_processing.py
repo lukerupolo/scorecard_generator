@@ -104,7 +104,9 @@ def process_scorecard_data(config: dict) -> dict:
             df_event.loc[df_event.duplicated(subset=['category_group']), 'Category'] = ''
             df_event = df_event.drop(columns=['category_group'])
 
-        # Use the event's name as the key to ensure a unique entry for each scorecard
-        sheets_dict[ev["name"][:28] or f"Event {idx+1}"] = df_event
+        # --- FIXED: Create a unique key for each scorecard to prevent overwriting ---
+        # This uses the event label and its index to ensure uniqueness.
+        unique_key = f"{ev['name'][:24] or f'Event {idx+1}'} - {idx+1}"
+        sheets_dict[unique_key] = df_event
         
     return sheets_dict
