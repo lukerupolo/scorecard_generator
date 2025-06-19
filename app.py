@@ -1,117 +1,103 @@
 import streamlit as st
-from io import BytesIO
-
-# --- Local Imports from our other files ---
-from style import STYLE_PRESETS 
-from ui import render_sidebar
-from data_processing import process_scorecard_data
-from powerpoint import create_presentation
-from excel import create_excel_workbook
+import pandas as pd
+import numpy as np
+import requests
+import json
+from datetime import datetime, timedelta
 
 # ================================================================================
-# 1) App State Initialization
+# NEW: AI Metric Categorization using OpenAI API
 # ================================================================================
-st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
+def get_ai_metric_categories(metrics: list, api_key: str) -> dict:
+    """
+    Uses the OpenAI API to categorize a list of metrics.
+    Returns a dictionary mapping each metric to its category.
+    """
+    if not api_key:
+        st.error("OpenAI API key is required for AI categorization. Please enter it in the sidebar.")
+        return {}
 
-# Initialize session state keys
-for key in ['scorecard_ready', 'show_ppt_creator']:
-    if key not in st.session_state: st.session_state[key] = False
-for key in ['sheets_dict', 'presentation_buffer']:
-     if key not in st.session_state: st.session_state[key] = None
-
-st.title("Event Marketing Scorecard & Presentation Generator")
-
-# ================================================================================
-# 2) Sidebar & Input Configuration
-# ================================================================================
-app_config = render_sidebar()
-
-# ================================================================================
-# 3) Main Page: Scorecard Generation
-# ================================================================================
-st.header("Step 1: Generate Scorecard Data")
-if st.button("✅ Generate Scorecard Data", use_container_width=True):
-    with st.spinner("Categorizing metrics with AI and building scorecards..."):
-        sheets_dict = process_scorecard_data(app_config)
-        st.session_state["sheets_dict"] = sheets_dict
-        st.session_state["scorecard_ready"] = True
-    st.rerun()
-
-# ================================================================================
-# 4) Main Page: Display and EDIT Scorecards
-# ================================================================================
-if st.session_state.scorecard_ready and st.session_state.sheets_dict:
-    st.markdown("---")
-    st.header("Step 2: Review & Edit Data")
+    st.info("Asking AI to categorize metrics...")
     
-    sheets_copy = st.session_state.sheets_dict.copy()
-    for name, df in sheets_copy.items():
-        st.markdown(f"#### Edit Scorecard: {name}")
-        edited_df = st.data_editor(
-            df,
-            key=f"editor_{name}",
-            use_container_width=True,
-            num_rows="dynamic",
-            column_config={"Category": st.column_config.TextColumn(width="medium")}
-        )
-        st.session_state.sheets_dict[name] = edited_df
+    prompt = f"""
+    You are a marketing analyst. Categorize the following metrics into 'Reach', 'Depth', or 'Action'.
+    - Reach: Did we hit sufficient scale?
+    - Depth: Did we meaningfully engage?
+    - Action: Did they take action?
+
+    Metrics: {json.dumps(metrics)}
+
+    Respond *only* with a single JSON object where keys are the metrics and values are their category.
+    """
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "gpt-4-turbo",
+        "messages": [{"role": "user", "content": prompt}],
+        "response_format": {"type": "json_object"}, # Ensures the response is valid JSON
+        "temperature": 0.1
+    }
     
-    st.markdown("---")
-    col1, col2 = st.columns(2)
-    if col1.button("🎯 Generate Proposed Benchmark", use_container_width=True):
-        st.info("Benchmark logic would run here.")
-    if st.session_state.sheets_dict:
-        excel_buffer = create_excel_workbook(st.session_state.sheets_dict)
-        col2.download_button(label="📥 Download as Excel Workbook", data=excel_buffer, file_name="full_scorecard.xlsx", use_container_width=True)
-    st.markdown("---")
-    st.session_state['show_ppt_creator'] = True
+    try:
+        api_url = "https://api.openai.com/v1/chat/completions"
+        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        
+        result_json = response.json()
+        categorized_metrics = json.loads(result_json['choices'][0]['message']['content'])
+        
+        return categorized_metrics
+
+    except requests.exceptions.RequestException as e:
+        st.error(f"AI categorization failed due to a network or API error: {e}")
+        return {}
+    except (KeyError, IndexError, json.JSONDecodeError) as e:
+        st.error(f"AI categorization failed while parsing the OpenAI response: {e}")
+        return {}
+
 
 # ================================================================================
-# 5) Main Page: PowerPoint UI
+# Data Processing and Scorecard Generation
 # ================================================================================
-if st.session_state.get('show_ppt_creator'):
-    st.header("Step 3: Create Your Presentation")
-    if st.session_state.get("presentation_buffer"):
-        st.download_button(label="✅ Download Your Presentation!", data=st.session_state.presentation_buffer, file_name="game_scorecard_presentation.pptx", use_container_width=True)
+def process_scorecard_data(config: dict) -> dict:
+    """
+    Main function to process all events and generate scorecards with AI-driven categories.
+    """
+    sheets_dict = {}
+    
+    all_metrics = list(set(config.get('metrics', [])))
+    
+    # Pass the OpenAI key from the config to the AI function
+    openai_api_key = config.get('openai_api_key')
+    ai_categories = get_ai_metric_categories(all_metrics, openai_api_key)
+    
+    if not ai_categories:
+        st.warning("Could not generate AI categories. Scorecards will be created without them.")
+    
+    for idx, ev in enumerate(config['events']):
+        rows_for_event = []
+        for metric_name in config['metrics']:
+            category = ai_categories.get(metric_name, "Uncategorized")
+            
+            row = {
+                "Category": category,
+                "Metric": metric_name,
+                "Baseline": np.random.randint(1000, 5000),
+                "Actual": np.random.randint(1500, 7500),
+                "3-Month Avg": "N/A"
+            }
+            rows_for_event.append(row)
 
-    with st.form("ppt_form"):
-        st.subheader("Presentation Style & Details")
-        col1, col2 = st.columns(2)
-        selected_style_name = col1.radio("Select Style Preset:", options=list(STYLE_PRESETS.keys()), horizontal=True)
-        image_region_prompt = col2.text_input("Region for AI Background Image", "Brazil")
-        ppt_title = st.text_input("Presentation Title", "Game Scorecard")
-        ppt_subtitle = st.text_input("Presentation Subtitle", "A detailed analysis")
-        moments_input = st.text_area("Scorecard Moments (one per line)", "Pre-Reveal\nLaunch", height=100)
-        submitted = st.form_submit_button("Generate Presentation", use_container_width=True)
+        df_event = pd.DataFrame(rows_for_event)
+        
+        if not df_event.empty:
+            df_event['category_group'] = (df_event['Category'] != df_event['Category'].shift()).cumsum()
+            df_event.loc[df_event.duplicated(subset=['category_group']), 'Category'] = ''
+            df_event = df_event.drop(columns=['category_group'])
 
-        if submitted:
-            if not app_config.get('openai_api_key'):
-                st.error("Please enter your OpenAI API key in the sidebar to generate images.")
-            elif not st.session_state.get("sheets_dict"):
-                st.error("Please generate scorecard data first.")
-            else:
-                # --- FIXED: Added robust error handling ---
-                ppt_buffer = None
-                try:
-                    with st.spinner(f"Building presentation with {selected_style_name} style..."):
-                        style_guide = STYLE_PRESETS[selected_style_name]
-                        scorecard_moments = [moment.strip() for moment in moments_input.split('\n') if moment.strip()]
-                        
-                        ppt_buffer = create_presentation(
-                            title=ppt_title,
-                            subtitle=ppt_subtitle,
-                            scorecard_moments=scorecard_moments,
-                            sheets_dict=st.session_state.sheets_dict,
-                            style_guide=style_guide,
-                            region_prompt=image_region_prompt,
-                            openai_api_key=app_config['openai_api_key'] 
-                        )
-                except Exception as e:
-                    st.error("An error occurred during presentation generation:")
-                    st.exception(e) # This will print the full error traceback in the app
-                
-                # Only proceed if the buffer was created successfully
-                if ppt_buffer:
-                    st.session_state["presentation_buffer"] = ppt_buffer
-                    st.rerun()
-
+        sheets_dict[ev["name"][:28] or f"Event{idx+1}"] = df_event
+        
+    return sheets_dict
