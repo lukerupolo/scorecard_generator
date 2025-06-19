@@ -82,9 +82,10 @@ def process_scorecard_data(config: dict) -> dict:
         st.warning("Could not generate AI categories. Using 'Uncategorized'.")
     
     # --- FIXED: This loop now correctly generates a separate scorecard for each event ---
-    for idx, ev in enumerate(config['events']):
+    for idx, ev in enumerate(config.get('events', [])):
         rows_for_event = []
-        for metric_name in config['metrics']:
+        # Use the metrics selected in the config for each event
+        for metric_name in config.get('metrics', []):
             category = ai_categories.get(metric_name, "Uncategorized")
             
             row = {
