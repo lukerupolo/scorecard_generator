@@ -120,6 +120,7 @@ if st.session_state.get('show_ppt_creator'):
             elif not st.session_state.get("sheets_dict"):
                 st.error("Please generate scorecard data first.")
             else:
+                ppt_buffer = None # Initialize buffer as None
                 try:
                     with st.spinner(f"Building presentation with {selected_style_name} style..."):
                         style_guide = STYLE_PRESETS[selected_style_name]
@@ -135,10 +136,13 @@ if st.session_state.get('show_ppt_creator'):
                             region_prompt=image_region_prompt,
                             openai_api_key=app_config['openai_api_key'] 
                         )
-                        st.session_state["presentation_buffer"] = ppt_buffer
-                        st.rerun()
                 except Exception as e:
-                    # NEW: Catch any error from the powerpoint module and display it
+                    # Catch any error from the powerpoint module and display it clearly
                     st.error("Failed to generate presentation. See details below.")
-                    st.exception(e)
+                    st.exception(e) # This will print the full error traceback in the app
+
+                # Only set the buffer and rerun if the presentation was created successfully
+                if ppt_buffer:
+                    st.session_state["presentation_buffer"] = ppt_buffer
+                    st.rerun()
 
