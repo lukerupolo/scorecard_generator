@@ -31,7 +31,6 @@ app_config = render_sidebar()
 # ================================================================================
 st.header("Step 1: Generate Scorecard Data")
 if st.button("✅ Generate Scorecard Data", use_container_width=True):
-    # UPDATED: More descriptive spinner message
     with st.spinner("Categorizing metrics with AI and building scorecards..."):
         sheets_dict = process_scorecard_data(app_config)
         st.session_state["sheets_dict"] = sheets_dict
@@ -91,17 +90,28 @@ if st.session_state.get('show_ppt_creator'):
             elif not st.session_state.get("sheets_dict"):
                 st.error("Please generate scorecard data first.")
             else:
-                with st.spinner(f"Building presentation with {selected_style_name} style..."):
-                    style_guide = STYLE_PRESETS[selected_style_name]
-                    scorecard_moments = [moment.strip() for moment in moments_input.split('\n') if moment.strip()]
-                    ppt_buffer = create_presentation(
-                        title=ppt_title,
-                        subtitle=ppt_subtitle,
-                        scorecard_moments=scorecard_moments,
-                        sheets_dict=st.session_state.sheets_dict,
-                        style_guide=style_guide,
-                        region_prompt=image_region_prompt,
-                        openai_api_key=app_config['openai_api_key'] 
-                    )
+                # --- FIXED: Added robust error handling ---
+                ppt_buffer = None
+                try:
+                    with st.spinner(f"Building presentation with {selected_style_name} style..."):
+                        style_guide = STYLE_PRESETS[selected_style_name]
+                        scorecard_moments = [moment.strip() for moment in moments_input.split('\n') if moment.strip()]
+                        
+                        ppt_buffer = create_presentation(
+                            title=ppt_title,
+                            subtitle=ppt_subtitle,
+                            scorecard_moments=scorecard_moments,
+                            sheets_dict=st.session_state.sheets_dict,
+                            style_guide=style_guide,
+                            region_prompt=image_region_prompt,
+                            openai_api_key=app_config['openai_api_key'] 
+                        )
+                except Exception as e:
+                    st.error("An error occurred during presentation generation:")
+                    st.exception(e) # This will print the full error traceback in the app
+                
+                # Only proceed if the buffer was created successfully
+                if ppt_buffer:
                     st.session_state["presentation_buffer"] = ppt_buffer
                     st.rerun()
+
