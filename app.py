@@ -5,7 +5,7 @@ from datetime import datetime
 # --- Local Imports from our other files ---
 from style import STYLE_PRESETS 
 from ui import render_sidebar
-from data_processing import process_scorecard_data
+from data_processing import process_scorecard_data, get_ai_metric_explanations
 from powerpoint import create_presentation
 from excel import create_excel_workbook
 
@@ -15,9 +15,9 @@ from excel import create_excel_workbook
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
 # Initialize session state keys
-for key in ['api_key_entered', 'scorecard_ready', 'show_ppt_creator']:
+for key in ['api_key_entered', 'metrics_confirmed', 'scorecard_ready', 'show_ppt_creator']:
     if key not in st.session_state: st.session_state[key] = False
-for key in ['openai_api_key', 'sheets_dict', 'presentation_buffer']:
+for key in ['openai_api_key', 'metrics', 'sheets_dict', 'presentation_buffer', 'metric_explanations']:
      if key not in st.session_state: st.session_state[key] = None
 
 st.title("Event Marketing Scorecard & Presentation Generator")
@@ -38,22 +38,46 @@ if not st.session_state.api_key_entered:
                 st.rerun()
             else:
                 st.error("Please enter a valid OpenAI API key.")
-else:
-    # ================================================================================
-    # Main App - This section only runs AFTER the API key is entered
-    # ================================================================================
-    app_config = {'openai_api_key': st.session_state.openai_api_key}
-
-    # --- NEW Step 1: Metric Selection ---
+# ================================================================================
+# Step 1: Metric Selection
+# ================================================================================
+elif not st.session_state.metrics_confirmed:
     st.header("Step 1: Metric Selection")
-    with st.expander("Select and Add Metrics", expanded=True):
+    with st.form("metrics_form"):
         predefined_metrics = ["Video Views (VOD)", "Hours Watched (Streams)", "Social Mentions", "Sessions", "DAU", "Revenue", "Installs", "Retention", "Watch Time", "ARPU", "Conversions"]
-        metrics = st.multiselect("Select metrics:", options=predefined_metrics, default=["Video Views (VOD)", "Hours Watched (Streams)"])
+        selected_metrics = st.multiselect("Select metrics:", options=predefined_metrics, default=["Video Views (VOD)", "Hours Watched (Streams)"])
         if custom_metric := st.text_input("✍️ Add Custom Metric"):
-            metrics.append(custom_metric)
-    app_config['metrics'] = metrics
+            selected_metrics.append(custom_metric)
+        
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        
+        # Button to get AI explanations
+        if col1.form_submit_button("🤖 Get AI Explanation for Selected Metrics"):
+             with st.spinner("Asking AI for explanations..."):
+                explanations = get_ai_metric_explanations(selected_metrics, st.session_state.openai_api_key)
+                st.session_state.metric_explanations = explanations
+        
+        # Button to confirm and move to the next step
+        if col2.form_submit_button("Confirm Metrics & Proceed →", type="primary"):
+            st.session_state.metrics = selected_metrics
+            st.session_state.metrics_confirmed = True
+            st.rerun()
+            
+    # Display AI explanations if they exist
+    if st.session_state.metric_explanations:
+        st.info("### AI Metric Explanations")
+        for metric, explanation in st.session_state.metric_explanations.items():
+            st.markdown(f"**{metric}:** {explanation}")
+# ================================================================================
+# Steps 2, 3, 4 - Main App Logic
+# ================================================================================
+else:
+    app_config = {
+        'openai_api_key': st.session_state.openai_api_key,
+        'metrics': st.session_state.metrics
+    }
 
-    # --- NEW Step 2: Event Configuration & Data Generation ---
     st.header("Step 2: Configure Events & Generate Data")
     with st.expander("Configure Events", expanded=True):
         game_options = {"EA Sports FC25": 3136, "FIFA 25": 3140, "Madden NFL 25": 3150, "NHL 25": 3160}
@@ -80,12 +104,9 @@ else:
             st.session_state["scorecard_ready"] = True
         st.rerun()
 
-    # --- NEW Step 3: Review & Edit Data ---
     if st.session_state.scorecard_ready and st.session_state.sheets_dict:
-        st.markdown("---")
-        st.header("Step 3: Review & Edit Data")
-        sheets_copy = st.session_state.sheets_dict.copy()
-        for name, df in sheets_copy.items():
+        st.markdown("---"); st.header("Step 3: Review & Edit Data")
+        for name, df in st.session_state.sheets_dict.items():
             st.markdown(f"#### Edit Scorecard: {name}")
             edited_df = st.data_editor(df, key=f"editor_{name}", use_container_width=True, num_rows="dynamic", column_config={"Category": st.column_config.TextColumn(width="medium"), "Baseline": st.column_config.NumberColumn(format="%d"), "Actual": st.column_config.NumberColumn(format="%d")})
             st.session_state.sheets_dict[name] = edited_df
@@ -98,12 +119,10 @@ else:
         st.markdown("---")
         st.session_state['show_ppt_creator'] = True
 
-    # --- NEW Step 4: Create Presentation ---
     if st.session_state.get('show_ppt_creator'):
         st.header("Step 4: Create Your Presentation")
         if st.session_state.get("presentation_buffer"):
             st.download_button(label="✅ Download Your Presentation!", data=st.session_state.presentation_buffer, file_name="game_scorecard_presentation.pptx", use_container_width=True)
-
         with st.form("ppt_form"):
             st.subheader("Presentation Style & Details")
             col1, col2 = st.columns(2)
@@ -113,22 +132,13 @@ else:
             ppt_subtitle = st.text_input("Presentation Subtitle", "A detailed analysis")
             moments_input = st.text_area("Scorecard Moments (one per line)", "Pre-Reveal\nLaunch", height=100)
             submitted = st.form_submit_button("Generate Presentation", use_container_width=True)
-
             if submitted:
                 if not st.session_state.get("sheets_dict"):
                     st.error("Please generate scorecard data first.")
                 else:
-                    with st.spinner(f"Building presentation with {selected_style_name} style..."):
+                    with st.spinner(f"Building presentation..."):
                         style_guide = STYLE_PRESETS[selected_style_name]
                         scorecard_moments = [moment.strip() for moment in moments_input.split('\n') if moment.strip()]
-                        ppt_buffer = create_presentation(
-                            title=ppt_title,
-                            subtitle=ppt_subtitle,
-                            scorecard_moments=scorecard_moments,
-                            sheets_dict=st.session_state.sheets_dict,
-                            style_guide=style_guide,
-                            region_prompt=image_region_prompt,
-                            openai_api_key=st.session_state.openai_api_key 
-                        )
+                        ppt_buffer = create_presentation(title=ppt_title, subtitle=ppt_subtitle, scorecard_moments=scorecard_moments, sheets_dict=st.session_state.sheets_dict, style_guide=style_guide, region_prompt=image_region_prompt, openai_api_key=st.session_state.openai_api_key)
                         st.session_state["presentation_buffer"] = ppt_buffer
                         st.rerun()
