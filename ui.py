@@ -7,16 +7,15 @@ def render_sidebar():
     with st.sidebar:
         st.markdown("## ⚙️ App Configuration")
         
-        # NEW: Input for OpenAI API Key
+        # This key is required for AI categorization in Step 1
         config['openai_api_key'] = st.text_input(
             "🔑 OpenAI API Key", 
             type="password",
-            help="Your key for generating images with DALL-E."
+            help="Required for AI-powered metric categorization and image generation."
         )
 
         st.markdown("---")
         
-        config['debug'] = st.checkbox("🔍 Show LevelUp raw data")
         st.markdown("## 📅 Event Configuration")
         game_options = {"EA Sports FC25": 3136, "FIFA 25": 3140, "Madden NFL 25": 3150, "NHL 25": 3160}
         region_options = ["US", "GB", "AU", "CA", "FR", "DE", "JP", "KR", "TH", "Other"]
@@ -38,5 +37,5 @@ def render_sidebar():
         metrics = st.multiselect("Select metrics:", options=predefined_metrics, default=["Video Views (VOD)", "Hours Watched (Streams)"], key="metrics_multiselect")
         if custom_metric := st.text_input("✍️ Add Custom Metric", key="custom_metric_input"): metrics.append(custom_metric)
         config['metrics'] = metrics
-
+            
     return config
