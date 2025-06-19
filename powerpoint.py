@@ -1,13 +1,12 @@
 from pptx import Presentation
 from pptx.util import Inches, Pt
-from pptx.enum.text import PP_ALIGN
 from io import BytesIO
 import matplotlib.pyplot as plt
 import requests 
 import streamlit as st
 import pandas as pd
-# --- FIXED: Import the constant for vertical anchoring ---
-from pptx.enum.dml import MSO_ANCHOR
+# --- FIXED: Import the alignment constants from the correct module ---
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 
 # ================================================================================
 # Main Presentation Creation Function
@@ -169,5 +168,5 @@ def add_df_to_slide(prs, df, slide_title, style_guide):
         cell = table.cell(r, 0)
         if cell.text:
             p = cell.text_frame.paragraphs[0]; p.font.bold = True; p.font.size = Pt(14); p.alignment = PP_ALIGN.CENTER
-            # --- FIXED: Use the correct constant for vertical anchoring ---
+            # Use the correct constant for vertical anchoring
             cell.vertical_anchor = MSO_ANCHOR.MIDDLE
