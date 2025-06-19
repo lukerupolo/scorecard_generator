@@ -15,19 +15,27 @@ from excel import create_excel_workbook
 # ================================================================================
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
-# Initialize session state keys to avoid errors on first run
-for key in ['api_key_entered', 'metrics_confirmed', 'benchmark_flow_complete', 'scorecard_ready', 'show_ppt_creator']:
-    if key not in st.session_state: st.session_state[key] = False
-for key in ['openai_api_key', 'metrics', 'benchmark_choice', 'benchmark_df', 'sheets_dict', 'presentation_buffer', 'events_config', 'proposed_benchmarks', 'metric_explanations']:
-     if key not in st.session_state: st.session_state[key] = None
-
-# Initialize saved_moments as a dictionary if it's None
-if st.session_state.saved_moments is None:
+# Initialize all session state keys to avoid errors on first run
+# This block runs only once at the start of a session.
+if 'app_initialized' not in st.session_state:
+    st.session_state.app_initialized = True
+    st.session_state.api_key_entered = False
+    st.session_state.metrics_confirmed = False
+    st.session_state.benchmark_flow_complete = False
+    st.session_state.scorecard_ready = False
+    st.session_state.show_ppt_creator = False
+    st.session_state.openai_api_key = None
+    st.session_state.metrics = []
+    st.session_state.benchmark_choice = "No, I will enter benchmarks manually later."
+    st.session_state.benchmark_df = pd.DataFrame()
+    st.session_state.sheets_dict = {}
+    st.session_state.presentation_buffer = None
+    st.session_state.events_config = []
+    st.session_state.proposed_benchmarks = {}
     st.session_state.saved_moments = {}
 
 st.title("Event Marketing Scorecard & Presentation Generator")
-# Render the sidebar on every run. The sidebar function now handles the reset logic.
-render_sidebar()
+render_sidebar() # This function now handles the navigation sidebar
 
 # ================================================================================
 # Step 0: API Key Entry
@@ -116,17 +124,16 @@ elif not st.session_state.benchmark_flow_complete:
 # Step 3, 4, 5 - Main App Logic
 # ================================================================================
 else:
-    # Build the config dictionary directly from session state when needed
     app_config = {
         'openai_api_key': st.session_state.openai_api_key,
         'metrics': st.session_state.metrics,
         'proposed_benchmarks': st.session_state.get('proposed_benchmarks')
     }
     
-    # --- Step 3: Build & Save Scorecard Moments ---
     st.header("Step 3: Build & Save Scorecard Moments")
     
-    if st.session_state.sheets_dict is None:
+    # Generate a blank scorecard structure if one isn't already being edited
+    if not st.session_state.sheets_dict:
         app_config['events'] = [{"name": "Current Moment"}]
         st.session_state.sheets_dict = process_scorecard_data(app_config)
 
@@ -163,10 +170,9 @@ else:
                 st.dataframe(df, use_container_width=True)
         st.session_state.show_ppt_creator = True
 
-    # --- Step 4: Create Presentation ---
     if st.session_state.get('show_ppt_creator'):
         st.markdown("---")
-        st.header("Step 4: Create Your Presentation")
+        st.header("Step 4: Create Presentation")
         
         if st.session_state.get("presentation_buffer"):
             st.download_button(label="✅ Download Your Presentation!", data=st.session_state.presentation_buffer, file_name="game_scorecard_presentation.pptx", use_container_width=True)
