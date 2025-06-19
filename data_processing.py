@@ -28,15 +28,19 @@ def process_scorecard_data(config: dict) -> dict:
     sheets_dict["Final Scorecard"] = df_event
     return sheets_dict
 
-def calculate_all_benchmarks(historical_data: Dict[str, pd.DataFrame]) -> (pd.DataFrame, Dict):
+def calculate_all_benchmarks(historical_inputs: Dict[str, Dict]) -> (pd.DataFrame, Dict):
     """
-    Takes a dictionary where keys are metrics and values are DataFrames of their historical data.
-    Returns a summary DataFrame and a simple dictionary of {metric: proposed_benchmark}.
+    Takes a dictionary where keys are metrics and values contain their historical data
+    and a user-provided 3-month average. Returns a summary DataFrame and a simple
+    dictionary of {metric: proposed_benchmark}.
     """
     summary_rows = []
     proposed_benchmarks_dict = {}
 
-    for metric, df in historical_data.items():
+    for metric, inputs in historical_inputs.items():
+        df = inputs['historical_df']
+        three_month_avg = inputs['three_month_avg']
+
         # Ensure data is numeric and drop rows with missing values
         df['Baseline (7-day)'] = pd.to_numeric(df['Baseline (7-day)'], errors='coerce')
         df['Actual (7-day)'] = pd.to_numeric(df['Actual (7-day)'], errors='coerce')
@@ -49,22 +53,26 @@ def calculate_all_benchmarks(historical_data: Dict[str, pd.DataFrame]) -> (pd.Da
         actuals = df['Actual (7-day)']
 
         # --- Perform Calculations Exactly as Specified ---
-        avg_actual = actuals.mean()
-        avg_baseline = baselines.mean()
         
-        # Calculate uplift for each historical event
+        # 1. Calculate the average uplift percentage from historical data
         uplifts = np.where(baselines != 0, (actuals - baselines) / baselines * 100, 0.0)
         avg_uplift_pct = uplifts.mean()
         
-        # Calculate the proposed benchmark
-        proposed_benchmark = np.median([avg_actual, avg_baseline])
+        # 2. Calculate the proposed benchmark using the user-provided 3-month average
+        # and the calculated uplift.
+        proposed_benchmark = three_month_avg * (1 + (avg_uplift_pct / 100))
+
+        # Also calculate historical averages for the summary table
+        avg_actual_historical = actuals.mean()
+        avg_baseline_historical = baselines.mean()
 
         # Append the summary row for the final table
         summary_rows.append({
             "Metric":                         metric,
-            "Avg. Actuals (Event Periods)":   round(avg_actual, 2),
-            "Baseline Method":                round(avg_baseline, 2),
+            "Avg. Actuals (Historical)":      round(avg_actual_historical, 2),
+            "Avg. Baseline (Historical)":     round(avg_baseline_historical, 2),
             "Baseline Uplift Expect. (%)":    f"{avg_uplift_pct:.2f}%",
+            "3-Month Avg (User Input)":       round(three_month_avg, 2),
             "Proposed Benchmark":             round(proposed_benchmark, 2),
         })
         
