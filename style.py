@@ -15,16 +15,32 @@ STYLE_PRESETS = {
             "content_body_text": hex_to_rgb("FFFFFF"),
             "table_header_bg": hex_to_rgb("00F468"),
             "table_header_text": hex_to_rgb("000000"),
-            # NEW: Single background color for all table rows
-            "table_row_bg": hex_to_rgb("4E4E4E"),
+            # FIXED: Renamed key to match what powerpoint.py is looking for
+            "table_alt_row_bg": hex_to_rgb("4E4E4E"),
         },
         "fonts": {"heading": "Inter", "body": "Inter"},
     },
     "Battlefield": {
-        # ... (other presets remain the same)
+        "colors": {
+            "title_slide_bg": hex_to_rgb("1B1C1E"), "title_slide_text": hex_to_rgb("FF8700"),
+            "content_slide_bg": hex_to_rgb("1B1C1E"), "content_heading_text": hex_to_rgb("FF8700"),
+            "content_body_text": hex_to_rgb("FFFFFF"), "table_header_bg": hex_to_rgb("FF8700"),
+            "table_header_text": hex_to_rgb("000000"), 
+            # Added key for consistency
+            "table_alt_row_bg": hex_to_rgb("323438"),
+        },
+        "fonts": {"heading": "Arial Black", "body": "Arial"},
     },
     "Apex": {
-        # ... (other presets remain the same)
+        "colors": {
+            "title_slide_bg": hex_to_rgb("222222"), "title_slide_text": hex_to_rgb("DA292A"),
+            "content_slide_bg": hex_to_rgb("222222"), "content_heading_text": hex_to_rgb("DA292A"),
+            "content_body_text": hex_to_rgb("FFFFFF"), "table_header_bg": hex_to_rgb("DA292A"),
+            "table_header_text": hex_to_rgb("FFFFFF"), 
+            # Added key for consistency
+            "table_alt_row_bg": hex_to_rgb("3C3C3C"),
+        },
+        "fonts": {"heading": "Verdana", "body": "Verdana"},
     }
 }
 
