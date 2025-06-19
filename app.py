@@ -85,7 +85,7 @@ else:
         
         # Ask the user if they want to perform this step
         benchmark_choice = st.radio(
-            "Would you like to generate a proposed benchmark using data from past events?",
+            "Would you like to calculate benchmark values in this session?",
             ("No, I will enter benchmarks manually or leave them blank", "Yes, let's calculate it"),
             key="benchmark_choice_radio"
         )
