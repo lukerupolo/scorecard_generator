@@ -17,6 +17,10 @@ def get_ai_metric_categories(metrics: list, api_key: str) -> dict:
         st.error("OpenAI API key is required for AI categorization. Please enter it in the sidebar.")
         return {}
 
+    # Don't make an API call if there are no metrics to categorize
+    if not metrics:
+        return {}
+
     st.info("Asking AI to categorize metrics...")
     
     prompt = f"""
@@ -68,9 +72,12 @@ def process_scorecard_data(config: dict) -> dict:
     """
     sheets_dict = {}
     
+    # Ensure there are metrics selected before proceeding
     all_metrics = list(set(config.get('metrics', [])))
-    
-    # Pass the OpenAI key from the config to the AI function
+    if not all_metrics:
+        st.warning("No metrics selected. Please select at least one metric in the sidebar.")
+        return {}
+        
     openai_api_key = config.get('openai_api_key')
     ai_categories = get_ai_metric_categories(all_metrics, openai_api_key)
     
@@ -93,6 +100,7 @@ def process_scorecard_data(config: dict) -> dict:
 
         df_event = pd.DataFrame(rows_for_event)
         
+        # FIXED: Only perform grouping if the DataFrame is not empty
         if not df_event.empty:
             df_event['category_group'] = (df_event['Category'] != df_event['Category'].shift()).cumsum()
             df_event.loc[df_event.duplicated(subset=['category_group']), 'Category'] = ''
