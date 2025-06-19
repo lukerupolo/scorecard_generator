@@ -1,13 +1,11 @@
 from pptx import Presentation
 from pptx.util import Inches, Pt
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from io import BytesIO
 import matplotlib.pyplot as plt
 import requests 
 import streamlit as st
 import pandas as pd
-
-# --- FIXED: Import all alignment constants from the correct module ---
-from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 
 # ================================================================================
 # Main Presentation Creation Function
@@ -44,30 +42,23 @@ def create_presentation(title, subtitle, scorecard_moments, sheets_dict, style_g
 # AI Background Image Generation
 # ================================================================================
 def generate_and_add_background_image(slide, region, style_guide, api_key, slide_width, slide_height, prompt_detail="football culture"):
-    """Generates an image using the OpenAI API and adds it as the slide background."""
     prompt = f"Dark, gritty, artistic representation of {prompt_detail} in {region}, cinematic, ultra-realistic photo, dramatic lighting, epic style"
-    
     if not api_key:
         st.warning("OpenAI API key is missing. Using a solid background.")
         slide.background.fill.solid(); slide.background.fill.fore_color.rgb = style_guide["colors"]["title_slide_bg"]
         return
-
     try:
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         payload = {"model": "dall-e-3", "prompt": prompt, "n": 1, "size": "1792x1024", "response_format": "url"}
         api_url = "https://api.openai.com/v1/images/generations"
-        
         response = requests.post(api_url, headers=headers, json=payload, timeout=45)
         response.raise_for_status()
-        
         image_url = response.json()['data'][0]['url']
         image_response = requests.get(image_url, timeout=15); image_response.raise_for_status()
         image_stream = BytesIO(image_response.content)
-
         pic = slide.shapes.add_picture(image_stream, Inches(0), Inches(0), width=slide_width, height=slide_height)
         slide.shapes._spTree.remove(pic._element)
         slide.shapes._spTree.insert(2, pic._element)
-
     except requests.exceptions.RequestException as e:
         st.error(f"Image generation for '{region}' failed: {e}. Using a solid background.")
         slide.background.fill.solid(); slide.background.fill.fore_color.rgb = style_guide["colors"]["title_slide_bg"]
@@ -78,17 +69,14 @@ def generate_and_add_background_image(slide, region, style_guide, api_key, slide
 def add_title_slide(prs, title_text, subtitle_text, style_guide, region, api_key):
     slide = prs.slides.add_slide(prs.slide_layouts[5])
     generate_and_add_background_image(slide, region, style_guide, api_key, prs.slide_width, prs.slide_height, prompt_detail="a cinematic football stadium")
-    
     title_shape = slide.shapes.add_textbox(Inches(1), Inches(3), Inches(14), Inches(2))
     p = title_shape.text_frame.paragraphs[0]; p.text = title_text.upper(); p.font.name = style_guide["fonts"]["heading"]; p.font.bold = True; p.font.size = style_guide["font_sizes"]["title"]; p.font.color.rgb = style_guide["colors"]["title_slide_text"]; p.alignment = PP_ALIGN.CENTER
-
     subtitle_shape = slide.shapes.add_textbox(Inches(1), Inches(4.5), Inches(14), Inches(1.5))
     p = subtitle_shape.text_frame.paragraphs[0]; p.text = subtitle_text; p.font.name = style_guide["fonts"]["body"]; p.font.size = style_guide["font_sizes"]["subtitle"]; p.font.color.rgb = style_guide["colors"]["title_slide_text"]; p.alignment = PP_ALIGN.CENTER
 
 def add_moment_title_slide(prs, title_text, style_guide, region, api_key):
     slide = prs.slides.add_slide(prs.slide_layouts[5])
     generate_and_add_background_image(slide, region, style_guide, api_key, prs.slide_width, prs.slide_height)
-    
     txBox = slide.shapes.add_textbox(Inches(1), Inches(3.5), Inches(14), Inches(3))
     p = txBox.text_frame.paragraphs[0]; p.text = title_text; p.font.name = style_guide["fonts"]["heading"]; p.font.bold = True; p.font.size = style_guide["font_sizes"]["moment_title"]; p.font.color.rgb = style_guide["colors"]["title_slide_text"]; p.alignment = PP_ALIGN.CENTER
 
@@ -100,21 +88,37 @@ def add_timeline_slide(prs, timeline_moments, style_guide):
     p = title_shape.text_frame.paragraphs[0]; p.text = "TIMELINE"; p.font.name = style_guide["fonts"]["heading"]; p.font.bold = True; p.font.size = style_guide["font_sizes"]["title"]; p.font.color.rgb = style_guide["colors"]["content_heading_text"]; p.alignment = PP_ALIGN.CENTER
 
     if not timeline_moments: return
-    fig, ax = plt.subplots(figsize=(14, 2.5))
+    
+    # --- FIXED TIMELINE GENERATION LOGIC ---
+    fig, ax = plt.subplots(figsize=(14, 2))
     fig.patch.set_facecolor(f'#{style_guide["colors"]["content_slide_bg"]}')
     ax.set_facecolor(f'#{style_guide["colors"]["content_slide_bg"]}')
+    
+    # Set explicit plot limits to ensure text fits
+    ax.set_ylim(-1, 1)
+    ax.set_xlim(0, len(timeline_moments) + 1)
+    
     ax.axhline(0, color=f'#{style_guide["colors"]["content_body_text"]}', xmin=0.05, xmax=0.95, zorder=1, linewidth=1.5)
+    
     for i, moment in enumerate(timeline_moments):
-        ax.plot(i + 1, 0, 'o', markersize=20, color=f'#{style_guide["colors"]["content_heading_text"]}', zorder=2)
-        text_props = dict(boxstyle='round,pad=0.4', facecolor='black', alpha=0.5, edgecolor='none')
-        ax.text(x=i + 1, y=-0.2, s=moment.upper(), ha='center', va='top', fontsize=14, fontname='sans-serif', color=f'#{style_guide["colors"]["content_body_text"]}', bbox=text_props)
+        ax.plot(i + 1, 0, 'o', markersize=15, color=f'#{style_guide["colors"]["content_heading_text"]}', zorder=2)
+        ax.text(
+            x=i + 1, y=-0.3, s=moment.upper(), # Position text below the line
+            ha='center', va='top', fontsize=12,
+            fontname='sans-serif', # Use a safe, standard font for charts
+            color=f'#{style_guide["colors"]["content_body_text"]}',
+            weight='bold'
+        )
     
     ax.axis('off')
-    plt.tight_layout(pad=0)
+    
     plot_stream = BytesIO()
-    plt.savefig(plot_stream, format='png', facecolor=fig.get_facecolor(), transparent=False)
-    plt.close(fig); plot_stream.seek(0)
-    slide.shapes.add_picture(plot_stream, Inches(1), Inches(3), width=Inches(14))
+    # Save the figure, ensuring the layout is tight so nothing is cut off.
+    plt.savefig(plot_stream, format='png', bbox_inches='tight', pad_inches=0.1, facecolor=fig.get_facecolor(), transparent=False)
+    plt.close(fig)
+    plot_stream.seek(0)
+    
+    slide.shapes.add_picture(plot_stream, Inches(1), Inches(3.5), width=Inches(14))
 
 def apply_table_style_pptx(table, style_guide):
     header_bg, header_text = style_guide["colors"]["table_header_bg"], style_guide["colors"]["table_header_text"]
@@ -153,21 +157,15 @@ def add_df_to_slide(prs, df, slide_title, style_guide):
     
     apply_table_style_pptx(table, style_guide)
 
-    df_copy = df.copy()
-    df_copy['category_group'] = (df_copy['Category'] != '').cumsum()
-    
+    df_copy = df.copy(); df_copy['category_group'] = (df_copy['Category'] != '').cumsum()
     for group_id in df_copy['category_group'].unique():
         group_rows = df_copy[df_copy['category_group'] == group_id]
         if len(group_rows) > 1:
-            start_row_idx = group_rows.index[0] + 1
-            end_row_idx = group_rows.index[-1] + 1
-            start_cell = table.cell(start_row_idx, 0)
-            end_cell = table.cell(end_row_idx, 0)
+            start_row_idx = group_rows.index[0] + 1; end_row_idx = group_rows.index[-1] + 1
+            start_cell = table.cell(start_row_idx, 0); end_cell = table.cell(end_row_idx, 0)
             start_cell.merge(end_cell)
-
     for r in range(1, rows + 1):
         cell = table.cell(r, 0)
         if cell.text:
             p = cell.text_frame.paragraphs[0]; p.font.bold = True; p.font.size = Pt(14); p.alignment = PP_ALIGN.CENTER
-            # Use the correct constant for vertical anchoring
             cell.vertical_anchor = MSO_ANCHOR.MIDDLE
