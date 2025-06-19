@@ -3,8 +3,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List
 
-# Note: AI Categorization is dormant as per the current workflow.
-# It can be re-added here if needed in the future.
+# ... (AI Categorization and other functions can remain here) ---
 
 def process_scorecard_data(config: dict) -> dict:
     """
@@ -16,7 +15,6 @@ def process_scorecard_data(config: dict) -> dict:
         st.warning("No metrics selected.")
         return {}
     
-    # Get the pre-calculated benchmarks from the config
     proposed_benchmarks = config.get('proposed_benchmarks', {})
 
     # The app now focuses on a single, final scorecard
@@ -27,7 +25,7 @@ def process_scorecard_data(config: dict) -> dict:
         
         # The initial table has blank values, ready for manual input
         row = {
-            "Category": "N/A",  # Category can be manually edited later
+            "Category": "N/A",
             "Metric": metric_name, 
             "Actuals": None, 
             "Benchmark": benchmark_val, 
@@ -39,18 +37,19 @@ def process_scorecard_data(config: dict) -> dict:
     sheets_dict["Final Scorecard"] = df_event
     return sheets_dict
 
-def calculate_all_benchmarks(
-    historical_data: Dict[str, pd.DataFrame]
-) -> (pd.DataFrame, Dict):
+def calculate_all_benchmarks(historical_inputs: Dict[str, Dict]) -> (pd.DataFrame, Dict):
     """
-    Takes a dictionary where keys are metrics and values are DataFrames of their historical data.
-    Returns a summary DataFrame and a simple dictionary of {metric: proposed_benchmark}.
+    Takes a dictionary where keys are metrics and values contain their historical data
+    and a user-provided 3-month average. Returns a summary DataFrame and a simple
+    dictionary of {metric: proposed_benchmark}.
     """
     summary_rows = []
     proposed_benchmarks_dict = {}
 
-    # This loop correctly iterates through the dictionary of DataFrames provided by app.py
-    for metric, df in historical_data.items():
+    for metric, inputs in historical_inputs.items():
+        df = inputs['historical_df']
+        three_month_avg_baseline = inputs['three_month_avg']
+
         # Ensure data is numeric and drop rows with missing values
         df['Baseline (7-day)'] = pd.to_numeric(df['Baseline (7-day)'], errors='coerce')
         df['Actual (7-day)'] = pd.to_numeric(df['Actual (7-day)'], errors='coerce')
@@ -63,21 +62,23 @@ def calculate_all_benchmarks(
         actuals = df['Actual (7-day)']
 
         # --- Perform Calculations Exactly as Specified ---
-        avg_actual = actuals.mean()
-        avg_baseline = baselines.mean()
         
-        # Calculate uplift for each historical event
+        # 1. Calculate the average historical uplift percentage
         uplifts = np.where(baselines != 0, (actuals - baselines) / baselines * 100, 0.0)
         avg_uplift_pct = uplifts.mean()
         
-        # Calculate the proposed benchmark
-        proposed_benchmark = np.median([avg_actual, avg_baseline])
+        # 2. Calculate the proposed benchmark using the user-provided 3-month average
+        # and the calculated historical uplift.
+        proposed_benchmark = three_month_avg_baseline * (1 + (avg_uplift_pct / 100))
 
+        # Also get historical averages for the summary table display
+        avg_actual_historical = actuals.mean()
+        
         # Append the summary row for the final table
         summary_rows.append({
             "Metric":                         metric,
-            "Avg. Actuals (Event Periods)":   round(avg_actual, 2),
-            "Baseline Method":                round(avg_baseline, 2),
+            "Avg. Actuals (Historical)":      round(avg_actual_historical, 2),
+            "Baseline Method (User Input)":   round(three_month_avg_baseline, 2),
             "Baseline Uplift Expect. (%)":    f"{avg_uplift_pct:.2f}%",
             "Proposed Benchmark":             round(proposed_benchmark, 2),
         })
