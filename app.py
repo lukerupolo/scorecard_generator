@@ -55,15 +55,19 @@ if st.session_state.scorecard_ready and st.session_state.sheets_dict:
     for name, df in sheets_copy.items():
         st.markdown(f"#### Edit Scorecard: {name}")
         
-        # NEW: Use st.data_editor to make the table interactive
+        # Use st.data_editor to make the table interactive
         edited_df = st.data_editor(
             df,
             key=f"editor_{name}", # A unique key for each data editor
             use_container_width=True,
-            num_rows="dynamic" # Allows you to add or delete rows
+            num_rows="dynamic",
+            # Configure the Category column to be wider
+            column_config={
+                "Category": st.column_config.TextColumn(width="medium"),
+            }
         )
         
-        # IMPORTANT: Update the main session state with any edits made by the user
+        # Update the main session state with any edits made by the user
         st.session_state.sheets_dict[name] = edited_df
     
     st.markdown("---")
