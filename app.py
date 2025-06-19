@@ -26,7 +26,8 @@ if st.session_state.saved_moments is None:
     st.session_state.saved_moments = {}
 
 st.title("Event Marketing Scorecard & Presentation Generator")
-app_config = render_sidebar()
+# Render the sidebar on every run. The sidebar function now handles the reset logic.
+render_sidebar()
 
 # ================================================================================
 # Step 0: API Key Entry
@@ -115,14 +116,16 @@ elif not st.session_state.benchmark_flow_complete:
 # Step 3, 4, 5 - Main App Logic
 # ================================================================================
 else:
-    app_config['openai_api_key'] = st.session_state.openai_api_key
-    app_config['metrics'] = st.session_state.metrics
-    app_config['proposed_benchmarks'] = st.session_state.get('proposed_benchmarks')
+    # Build the config dictionary directly from session state when needed
+    app_config = {
+        'openai_api_key': st.session_state.openai_api_key,
+        'metrics': st.session_state.metrics,
+        'proposed_benchmarks': st.session_state.get('proposed_benchmarks')
+    }
     
     # --- Step 3: Build & Save Scorecard Moments ---
     st.header("Step 3: Build & Save Scorecard Moments")
     
-    # Generate a blank scorecard structure if one isn't already being edited
     if st.session_state.sheets_dict is None:
         app_config['events'] = [{"name": "Current Moment"}]
         st.session_state.sheets_dict = process_scorecard_data(app_config)
@@ -152,7 +155,6 @@ else:
             else:
                 st.error("Please enter a name for the moment before saving.")
 
-    # Display the list of saved moments
     if st.session_state.saved_moments:
         st.markdown("---")
         st.subheader("Saved Scorecard Moments")
