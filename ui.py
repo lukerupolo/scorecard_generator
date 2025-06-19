@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 
 def render_sidebar():
     """
@@ -13,7 +14,7 @@ def render_sidebar():
         if st.session_state.get('api_key_entered'): step = 1
         if st.session_state.get('metrics_confirmed'): step = 2
         if st.session_state.get('benchmark_flow_complete'): step = 3
-        if st.session_state.get('saved_moments'): step = 4 # Progress when at least one moment is saved
+        if st.session_state.get('saved_moments'): step = 4
         
         steps_list = [
             "API Key",
@@ -37,25 +38,23 @@ def render_sidebar():
         
         st.markdown("---")
         
-        # --- FIXED: This button now correctly resets the workflow without deleting saved moments ---
+        # --- FIXED: This button now correctly RESETS the workflow without deleting state ---
         if st.button("♻️ Start New Scorecard Moment", use_container_width=True):
-            # Define which keys to reset to start a new scorecard flow
-            keys_to_reset = [
-                'metrics_confirmed', 'benchmark_flow_complete', 'scorecard_ready', 
-                'show_ppt_creator', 'metrics', 'benchmark_choice', 'benchmark_df',
-                'sheets_dict', 'presentation_buffer', 'events_config', 
-                'proposed_benchmarks', 'metric_explanations'
-            ]
             
-            # Reset the workflow keys
-            for key in keys_to_reset:
-                if key in st.session_state:
-                    del st.session_state[key]
+            # Reset workflow state variables to their default values
+            st.session_state.metrics_confirmed = False
+            st.session_state.benchmark_flow_complete = False
+            st.session_state.scorecard_ready = False
+            st.session_state.show_ppt_creator = False
+            st.session_state.metrics = None
+            st.session_state.benchmark_df = None
+            st.session_state.sheets_dict = None
+            st.session_state.presentation_buffer = None
+            st.session_state.proposed_benchmarks = None
             
             # The 'saved_moments', 'openai_api_key', and 'api_key_entered' keys
-            # are intentionally left untouched.
+            # are intentionally left untouched to preserve them across runs.
             
             st.rerun()
 
-    # This dictionary is kept for potential future use but is not currently needed
     return {}
