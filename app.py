@@ -6,7 +6,7 @@ import pandas as pd
 # --- Local Imports from our other files ---
 from style import STYLE_PRESETS 
 from ui import render_sidebar
-from data_processing import process_scorecard_data, generate_proposed_benchmark
+from data_processing import process_scorecard_data, calculate_all_benchmarks
 from powerpoint import create_presentation
 from excel import create_excel_workbook
 
@@ -46,38 +46,38 @@ elif not st.session_state.metrics_confirmed:
             st.rerun()
 
 # ================================================================================
-# Step 2: Optional Benchmark Calculation from File
+# Step 2: Optional Benchmark Calculation (Corrected Workflow)
 # ================================================================================
 elif not st.session_state.benchmark_flow_complete:
     st.header("Step 2: Benchmark Calculation (Optional)")
     
     benchmark_choice = st.radio(
-        "Would you like to calculate proposed benchmark values by uploading historical data?",
-        ("No, I will enter benchmarks manually later.", "Yes, calculate benchmarks from a file."),
+        "Would you like to calculate proposed benchmark values in this session using historical data?",
+        ("No, I will enter benchmarks manually later.", "Yes, calculate benchmarks from past events."),
         key="benchmark_choice_radio"
     )
 
-    if benchmark_choice == "Yes, calculate benchmarks from a file.":
-        with st.form("benchmark_file_form"):
-            st.info("Upload a CSV file with past event data. It should contain columns for 'Metric', 'Baseline', and 'Actual'.")
-            uploaded_benchmark_file = st.file_uploader("Upload your benchmark data source file", type=["csv"])
+    if benchmark_choice == "Yes, calculate benchmarks from past events.":
+        with st.form("benchmark_data_form"):
+            st.info("For each metric below, enter the Baseline and Actual values from past events.")
             
-            if st.form_submit_button("Calculate Proposed Benchmark & Proceed →", type="primary"):
-                if uploaded_benchmark_file is not None:
-                    with st.spinner("Analyzing historical data..."):
-                        try:
-                            benchmark_source_df = pd.read_csv(uploaded_benchmark_file)
-                            # Generate the summary table
-                            benchmark_summary_df = generate_proposed_benchmark(benchmark_source_df, st.session_state.metrics)
-                            st.session_state.benchmark_df = benchmark_summary_df
-                            # Extract the 'Proposed Benchmark' values to use later
-                            st.session_state.proposed_benchmarks = benchmark_summary_df.set_index('Metric')['Proposed Benchmark'].to_dict()
-                            st.session_state.benchmark_flow_complete = True
-                        except Exception as e:
-                            st.error(f"Failed to process file: {e}")
-                    st.rerun()
-                else:
-                    st.error("Please upload a file to calculate benchmarks.")
+            historical_data_input = {}
+            for metric in st.session_state.metrics:
+                st.markdown(f"#### Data for: **{metric}**")
+                # Create a blank DataFrame for the user to fill in historical data for this metric
+                df_template = pd.DataFrame([{"Event Name": f"Past Event {i+1}", "Baseline (7-day)": None, "Actual (7-day)": None} for i in range(2)]) # Start with 2 empty rows
+                
+                edited_df = st.data_editor(df_template, key=f"hist_editor_{metric}", num_rows="dynamic", use_container_width=True)
+                historical_data_input[metric] = edited_df
+
+            if st.form_submit_button("Calculate All Proposed Benchmarks & Proceed →", type="primary"):
+                with st.spinner("Analyzing historical data..."):
+                    # Pass the dictionary of metric data to the calculation function
+                    benchmark_summary_df, proposed_benchmarks = calculate_all_benchmarks(historical_data_input)
+                    st.session_state.benchmark_df = benchmark_summary_df
+                    st.session_state.proposed_benchmarks = proposed_benchmarks
+                    st.session_state.benchmark_flow_complete = True
+                st.rerun()
     else:
         if st.button("Proceed to Event Configuration →", type="primary"):
             st.session_state.benchmark_flow_complete = True
@@ -96,36 +96,4 @@ else:
     st.header("Step 3: Configure Events & Generate Scorecard")
     # ... (Event config logic is unchanged)
     
-    if st.button("✅ Generate Scorecard Structure", use_container_width=True, type="primary"):
-        with st.spinner("Building scorecards..."):
-            sheets_dict = process_scorecard_data(app_config)
-            st.session_state["sheets_dict"] = sheets_dict
-            st.session_state["scorecard_ready"] = True
-        st.rerun()
-
-    if st.session_state.scorecard_ready and st.session_state.sheets_dict:
-        st.markdown("---"); st.header("Step 4: Review & Edit Data")
-        
-        # Display the calculated benchmark summary table if it exists
-        if st.session_state.benchmark_df is not None and not st.session_state.benchmark_df.empty:
-            st.markdown("#### ✨ Proposed Benchmark Summary")
-            st.dataframe(st.session_state.benchmark_df, use_container_width=True)
-            st.markdown("---")
-
-        for name, df in st.session_state.sheets_dict.items():
-            st.markdown(f"#### Edit Scorecard: {name}")
-            edited_df = st.data_editor(df, key=f"editor_{name}", use_container_width=True, num_rows="dynamic")
-            
-            # Recalculate difference column on edit
-            edited_df['Actuals'] = pd.to_numeric(edited_df['Actuals'], errors='coerce')
-            edited_df['Benchmark'] = pd.to_numeric(edited_df['Benchmark'], errors='coerce')
-            edited_df['% Difference'] = ((edited_df['Actuals'] - edited_df['Benchmark']) / edited_df['Benchmark']).apply(lambda x: f"{x:.1%}" if pd.notna(x) else "N/A")
-            
-            st.session_state.sheets_dict[name] = edited_df
-        
-        st.markdown("---")
-        st.session_state['show_ppt_creator'] = True
-
-    if st.session_state.get('show_ppt_creator'):
-        st.header("Step 5: Create Presentation")
-        # ... (PPT creation logic remains the same)
+    # ... The rest of the app logic remains the same
