@@ -14,7 +14,7 @@ def get_ai_metric_categories(metrics: list, api_key: str) -> dict:
     Returns a dictionary mapping each metric to its category.
     """
     if not api_key:
-        st.error("OpenAI API key is required for AI categorization. Please enter it in the sidebar.")
+        # This check is now primarily handled in app.py, but remains as a safeguard.
         return {}
 
     if not metrics:
@@ -67,6 +67,7 @@ def get_ai_metric_categories(metrics: list, api_key: str) -> dict:
 def process_scorecard_data(config: dict) -> dict:
     """
     Main function to process all events and generate scorecards with AI-driven categories.
+    The Baseline and Actual values are left blank for manual input.
     """
     sheets_dict = {}
     
@@ -81,18 +82,17 @@ def process_scorecard_data(config: dict) -> dict:
     if not ai_categories:
         st.warning("Could not generate AI categories. Using 'Uncategorized'.")
     
-    # --- FIXED: This loop now correctly generates a separate scorecard for each event ---
     for idx, ev in enumerate(config.get('events', [])):
         rows_for_event = []
-        # Use the metrics selected in the config for each event
         for metric_name in config.get('metrics', []):
             category = ai_categories.get(metric_name, "Uncategorized")
             
+            # --- CHANGED: Values are now blank for manual entry ---
             row = {
                 "Category": category,
                 "Metric": metric_name,
-                "Baseline": np.random.randint(1000, 5000),
-                "Actual": np.random.randint(1500, 7500),
+                "Baseline": None, # Set to None for a blank cell
+                "Actual": None,   # Set to None for a blank cell
                 "3-Month Avg": "N/A"
             }
             rows_for_event.append(row)
@@ -104,8 +104,6 @@ def process_scorecard_data(config: dict) -> dict:
             df_event.loc[df_event.duplicated(subset=['category_group']), 'Category'] = ''
             df_event = df_event.drop(columns=['category_group'])
 
-        # --- FIXED: Create a unique key for each scorecard to prevent overwriting ---
-        # This uses the event label and its index to ensure uniqueness.
         unique_key = f"{ev['name'][:24] or f'Event {idx+1}'} - {idx+1}"
         sheets_dict[unique_key] = df_event
         
