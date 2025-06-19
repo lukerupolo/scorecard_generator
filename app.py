@@ -13,7 +13,6 @@ from excel import create_excel_workbook
 # ================================================================================
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
-# Initialize session state keys
 for key in ['scorecard_ready', 'show_ppt_creator']:
     if key not in st.session_state: st.session_state[key] = False
 for key in ['sheets_dict', 'presentation_buffer']:
@@ -31,11 +30,15 @@ app_config = render_sidebar()
 # ================================================================================
 st.header("Step 1: Generate Scorecard Data")
 if st.button("✅ Generate Scorecard Data", use_container_width=True):
-    with st.spinner("Categorizing metrics with AI and building scorecards..."):
-        sheets_dict = process_scorecard_data(app_config)
-        st.session_state["sheets_dict"] = sheets_dict
-        st.session_state["scorecard_ready"] = True
-    st.rerun()
+    # NEW: Check for OpenAI API key before proceeding
+    if not app_config.get('openai_api_key'):
+        st.error("Please enter your OpenAI API key in the sidebar to generate scorecards.")
+    else:
+        with st.spinner("Categorizing metrics with AI and building scorecards..."):
+            sheets_dict = process_scorecard_data(app_config)
+            st.session_state["sheets_dict"] = sheets_dict
+            st.session_state["scorecard_ready"] = True
+        st.rerun()
 
 # ================================================================================
 # 4) Main Page: Display and EDIT Scorecards
@@ -52,7 +55,11 @@ if st.session_state.scorecard_ready and st.session_state.sheets_dict:
             key=f"editor_{name}",
             use_container_width=True,
             num_rows="dynamic",
-            column_config={"Category": st.column_config.TextColumn(width="medium")}
+            column_config={
+                "Category": st.column_config.TextColumn(width="medium"),
+                "Baseline": st.column_config.NumberColumn(format="%d"),
+                "Actual": st.column_config.NumberColumn(format="%d"),
+            }
         )
         st.session_state.sheets_dict[name] = edited_df
     
@@ -90,28 +97,17 @@ if st.session_state.get('show_ppt_creator'):
             elif not st.session_state.get("sheets_dict"):
                 st.error("Please generate scorecard data first.")
             else:
-                # --- FIXED: Added robust error handling ---
-                ppt_buffer = None
-                try:
-                    with st.spinner(f"Building presentation with {selected_style_name} style..."):
-                        style_guide = STYLE_PRESETS[selected_style_name]
-                        scorecard_moments = [moment.strip() for moment in moments_input.split('\n') if moment.strip()]
-                        
-                        ppt_buffer = create_presentation(
-                            title=ppt_title,
-                            subtitle=ppt_subtitle,
-                            scorecard_moments=scorecard_moments,
-                            sheets_dict=st.session_state.sheets_dict,
-                            style_guide=style_guide,
-                            region_prompt=image_region_prompt,
-                            openai_api_key=app_config['openai_api_key'] 
-                        )
-                except Exception as e:
-                    st.error("An error occurred during presentation generation:")
-                    st.exception(e) # This will print the full error traceback in the app
-                
-                # Only proceed if the buffer was created successfully
-                if ppt_buffer:
+                with st.spinner(f"Building presentation with {selected_style_name} style..."):
+                    style_guide = STYLE_PRESETS[selected_style_name]
+                    scorecard_moments = [moment.strip() for moment in moments_input.split('\n') if moment.strip()]
+                    ppt_buffer = create_presentation(
+                        title=ppt_title,
+                        subtitle=ppt_subtitle,
+                        scorecard_moments=scorecard_moments,
+                        sheets_dict=st.session_state.sheets_dict,
+                        style_guide=style_guide,
+                        region_prompt=image_region_prompt,
+                        openai_api_key=app_config['openai_api_key'] 
+                    )
                     st.session_state["presentation_buffer"] = ppt_buffer
                     st.rerun()
-
