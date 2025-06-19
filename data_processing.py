@@ -15,7 +15,9 @@ def process_scorecard_data(config: dict) -> dict:
         st.warning("No metrics selected.")
         return {}
     
-    proposed_benchmarks = config.get('proposed_benchmarks', {})
+    # --- FIXED: This now safely handles the case where no benchmarks are calculated ---
+    # It defaults to an empty dictionary if 'proposed_benchmarks' is None.
+    proposed_benchmarks = config.get('proposed_benchmarks') or {}
 
     # The app now focuses on a single, final scorecard
     rows_for_event = []
