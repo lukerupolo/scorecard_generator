@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timedelta
 
 # ================================================================================
-# NEW: AI Metric Categorization using OpenAI API
+# AI Metric Categorization using OpenAI API
 # ================================================================================
 def get_ai_metric_categories(metrics: list, api_key: str) -> dict:
     """
@@ -17,7 +17,6 @@ def get_ai_metric_categories(metrics: list, api_key: str) -> dict:
         st.error("OpenAI API key is required for AI categorization. Please enter it in the sidebar.")
         return {}
 
-    # Don't make an API call if there are no metrics to categorize
     if not metrics:
         return {}
 
@@ -41,7 +40,7 @@ def get_ai_metric_categories(metrics: list, api_key: str) -> dict:
     payload = {
         "model": "gpt-4-turbo",
         "messages": [{"role": "user", "content": prompt}],
-        "response_format": {"type": "json_object"}, # Ensures the response is valid JSON
+        "response_format": {"type": "json_object"},
         "temperature": 0.1
     }
     
@@ -62,7 +61,6 @@ def get_ai_metric_categories(metrics: list, api_key: str) -> dict:
         st.error(f"AI categorization failed while parsing the OpenAI response: {e}")
         return {}
 
-
 # ================================================================================
 # Data Processing and Scorecard Generation
 # ================================================================================
@@ -72,7 +70,6 @@ def process_scorecard_data(config: dict) -> dict:
     """
     sheets_dict = {}
     
-    # Ensure there are metrics selected before proceeding
     all_metrics = list(set(config.get('metrics', [])))
     if not all_metrics:
         st.warning("No metrics selected. Please select at least one metric in the sidebar.")
@@ -82,8 +79,9 @@ def process_scorecard_data(config: dict) -> dict:
     ai_categories = get_ai_metric_categories(all_metrics, openai_api_key)
     
     if not ai_categories:
-        st.warning("Could not generate AI categories. Scorecards will be created without them.")
+        st.warning("Could not generate AI categories. Using 'Uncategorized'.")
     
+    # --- FIXED: This loop now correctly generates a separate scorecard for each event ---
     for idx, ev in enumerate(config['events']):
         rows_for_event = []
         for metric_name in config['metrics']:
@@ -100,12 +98,12 @@ def process_scorecard_data(config: dict) -> dict:
 
         df_event = pd.DataFrame(rows_for_event)
         
-        # FIXED: Only perform grouping if the DataFrame is not empty
         if not df_event.empty:
             df_event['category_group'] = (df_event['Category'] != df_event['Category'].shift()).cumsum()
             df_event.loc[df_event.duplicated(subset=['category_group']), 'Category'] = ''
             df_event = df_event.drop(columns=['category_group'])
 
-        sheets_dict[ev["name"][:28] or f"Event{idx+1}"] = df_event
+        # Use the event's name as the key to ensure a unique entry for each scorecard
+        sheets_dict[ev["name"][:28] or f"Event {idx+1}"] = df_event
         
     return sheets_dict
