@@ -1,11 +1,11 @@
 from pptx import Presentation
 from pptx.util import Inches, Pt
-from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from io import BytesIO
 import matplotlib.pyplot as plt
 import requests 
 import streamlit as st
 import pandas as pd
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 
 # ================================================================================
 # Main Presentation Creation Function
@@ -83,59 +83,51 @@ def add_moment_title_slide(prs, title_text, style_guide, region, api_key):
 def add_timeline_slide(prs, timeline_moments, style_guide):
     slide = prs.slides.add_slide(prs.slide_layouts[5])
     slide.background.fill.solid(); slide.background.fill.fore_color.rgb = style_guide["colors"]["content_slide_bg"]
-    
     title_shape = slide.shapes.add_textbox(Inches(1), Inches(0.5), Inches(14), Inches(1.5))
     p = title_shape.text_frame.paragraphs[0]; p.text = "TIMELINE"; p.font.name = style_guide["fonts"]["heading"]; p.font.bold = True; p.font.size = style_guide["font_sizes"]["title"]; p.font.color.rgb = style_guide["colors"]["content_heading_text"]; p.alignment = PP_ALIGN.CENTER
-
     if not timeline_moments: return
-    
-    # --- FIXED TIMELINE GENERATION LOGIC ---
-    fig, ax = plt.subplots(figsize=(14, 2))
+    fig, ax = plt.subplots(figsize=(14, 2.5))
     fig.patch.set_facecolor(f'#{style_guide["colors"]["content_slide_bg"]}')
     ax.set_facecolor(f'#{style_guide["colors"]["content_slide_bg"]}')
-    
-    # Set explicit plot limits to ensure text fits
-    ax.set_ylim(-1, 1)
-    ax.set_xlim(0, len(timeline_moments) + 1)
-    
     ax.axhline(0, color=f'#{style_guide["colors"]["content_body_text"]}', xmin=0.05, xmax=0.95, zorder=1, linewidth=1.5)
-    
     for i, moment in enumerate(timeline_moments):
-        ax.plot(i + 1, 0, 'o', markersize=15, color=f'#{style_guide["colors"]["content_heading_text"]}', zorder=2)
-        ax.text(
-            x=i + 1, y=-0.3, s=moment.upper(), # Position text below the line
-            ha='center', va='top', fontsize=12,
-            fontname='sans-serif', # Use a safe, standard font for charts
-            color=f'#{style_guide["colors"]["content_body_text"]}',
-            weight='bold'
-        )
-    
-    ax.axis('off')
-    
-    plot_stream = BytesIO()
-    # Save the figure, ensuring the layout is tight so nothing is cut off.
-    plt.savefig(plot_stream, format='png', bbox_inches='tight', pad_inches=0.1, facecolor=fig.get_facecolor(), transparent=False)
-    plt.close(fig)
-    plot_stream.seek(0)
-    
+        ax.plot(i + 1, 0, 'o', markersize=20, color=f'#{style_guide["colors"]["content_heading_text"]}', zorder=2)
+        ax.text(x=i + 1, y=-0.3, s=moment.upper(), ha='center', va='top', fontsize=12, fontname='sans-serif', color=f'#{style_guide["colors"]["content_body_text"]}', weight='bold')
+    ax.set_ylim(-1, 1); ax.axis('off'); plt.tight_layout(pad=0.1)
+    plot_stream = BytesIO(); plt.savefig(plot_stream, format='png', facecolor=fig.get_facecolor(), transparent=False); plt.close(fig); plot_stream.seek(0)
     slide.shapes.add_picture(plot_stream, Inches(1), Inches(3.5), width=Inches(14))
 
 def apply_table_style_pptx(table, style_guide):
-    header_bg, header_text = style_guide["colors"]["table_header_bg"], style_guide["colors"]["table_header_text"]
-    body_text, alt_bg = style_guide["colors"]["content_body_text"], style_guide["colors"]["table_alt_row_bg"]
+    """
+    Styles a table in PowerPoint using the provided style guide.
+    """
+    header_bg = style_guide["colors"]["table_header_bg"]
+    header_text = style_guide["colors"]["table_header_text"]
+    body_text = style_guide["colors"]["content_body_text"]
+    row_bg = style_guide["colors"]["table_alt_row_bg"] # Use this key for the row background
+    
     heading_font, body_font = style_guide["fonts"]["heading"], style_guide["fonts"]["body"]
     header_fs, body_fs = style_guide["font_sizes"]["table_header"], style_guide["font_sizes"]["table_body"]
     
+    # Style header row
     for cell in table.rows[0].cells:
         cell.fill.solid(); cell.fill.fore_color.rgb = header_bg
         p = cell.text_frame.paragraphs[0]; p.font.color.rgb = header_text; p.font.name = heading_font; p.font.size = header_fs; p.alignment = PP_ALIGN.CENTER
     
+    # Style data rows
     for i, row in enumerate(table.rows):
-        if i == 0: continue
-        if i % 2 != 0:
-            for cell in row.cells: cell.fill.solid(); cell.fill.fore_color.rgb = alt_bg
+        if i == 0: continue # Skip header row
+        
+        # FIXED: Apply the same background color to ALL data rows
         for cell in row.cells:
-            p = cell.text_frame.paragraphs[0]; p.font.name = body_font; p.font.size = body_fs; p.font.color.rgb = body_text
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = row_bg
+            
+            # Apply text styling
+            p = cell.text_frame.paragraphs[0]
+            p.font.name = body_font
+            p.font.size = body_fs
+            p.font.color.rgb = body_text
 
 def add_df_to_slide(prs, df, slide_title, style_guide):
     slide = prs.slides.add_slide(prs.slide_layouts[5])
@@ -157,15 +149,18 @@ def add_df_to_slide(prs, df, slide_title, style_guide):
     
     apply_table_style_pptx(table, style_guide)
 
-    df_copy = df.copy(); df_copy['category_group'] = (df_copy['Category'] != '').cumsum()
-    for group_id in df_copy['category_group'].unique():
-        group_rows = df_copy[df_copy['category_group'] == group_id]
-        if len(group_rows) > 1:
-            start_row_idx = group_rows.index[0] + 1; end_row_idx = group_rows.index[-1] + 1
-            start_cell = table.cell(start_row_idx, 0); end_cell = table.cell(end_row_idx, 0)
-            start_cell.merge(end_cell)
-    for r in range(1, rows + 1):
-        cell = table.cell(r, 0)
-        if cell.text:
-            p = cell.text_frame.paragraphs[0]; p.font.bold = True; p.font.size = Pt(14); p.alignment = PP_ALIGN.CENTER
-            cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+    df_copy = df.copy()
+    if 'Category' in df_copy.columns:
+        df_copy['category_group'] = (df_copy['Category'] != '').cumsum()
+        for group_id in df_copy['category_group'].unique():
+            group_rows = df_copy[df_copy['category_group'] == group_id]
+            if len(group_rows) > 1:
+                start_row_idx = group_rows.index[0] + 1; end_row_idx = group_rows.index[-1] + 1
+                start_cell = table.cell(start_row_idx, 0); end_cell = table.cell(end_row_idx, 0)
+                start_cell.merge(end_cell)
+        
+        for r in range(1, rows + 1):
+            cell = table.cell(r, 0)
+            if cell.text:
+                p = cell.text_frame.paragraphs[0]; p.font.bold = True; p.font.size = Pt(14); p.alignment = PP_ALIGN.CENTER
+                cell.vertical_anchor = MSO_ANCHOR.MIDDLE
