@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 import requests 
 import streamlit as st
 import pandas as pd
+# --- FIXED: Import the constant for vertical anchoring ---
+from pptx.enum.dml import MSO_ANCHOR
 
 # ================================================================================
 # Main Presentation Creation Function
@@ -151,7 +153,7 @@ def add_df_to_slide(prs, df, slide_title, style_guide):
     
     apply_table_style_pptx(table, style_guide)
 
-    df_copy = df.copy() # Make a copy to avoid modifying the original DataFrame
+    df_copy = df.copy()
     df_copy['category_group'] = (df_copy['Category'] != '').cumsum()
     
     for group_id in df_copy['category_group'].unique():
@@ -159,7 +161,6 @@ def add_df_to_slide(prs, df, slide_title, style_guide):
         if len(group_rows) > 1:
             start_row_idx = group_rows.index[0] + 1
             end_row_idx = group_rows.index[-1] + 1
-            
             start_cell = table.cell(start_row_idx, 0)
             end_cell = table.cell(end_row_idx, 0)
             start_cell.merge(end_cell)
@@ -168,4 +169,5 @@ def add_df_to_slide(prs, df, slide_title, style_guide):
         cell = table.cell(r, 0)
         if cell.text:
             p = cell.text_frame.paragraphs[0]; p.font.bold = True; p.font.size = Pt(14); p.alignment = PP_ALIGN.CENTER
-            cell.vertical_anchor = 'middle'
+            # --- FIXED: Use the correct constant for vertical anchoring ---
+            cell.vertical_anchor = MSO_ANCHOR.MIDDLE
