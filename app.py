@@ -1,5 +1,6 @@
 import streamlit as st
 from io import BytesIO
+from datetime import datetime
 
 # --- Local Imports from our other files ---
 from style import STYLE_PRESETS 
@@ -23,14 +24,39 @@ st.title("Event Marketing Scorecard & Presentation Generator")
 # ================================================================================
 # 2) Sidebar & Input Configuration
 # ================================================================================
+# The sidebar now only handles API keys and metric selection.
 app_config = render_sidebar()
 
 # ================================================================================
-# 3) Main Page: Scorecard Generation
+# 3) Main Page: Event Configuration and Scorecard Generation
 # ================================================================================
-st.header("Step 1: Generate Scorecard Data")
-if st.button("✅ Generate Scorecard Data", use_container_width=True):
-    # NEW: Check for OpenAI API key before proceeding
+st.header("Step 1: Configure Events & Generate Data")
+
+# --- NEW: Event Configuration moved from sidebar to main page ---
+with st.expander("Configure Events", expanded=True):
+    game_options = {"EA Sports FC25": 3136, "FIFA 25": 3140, "Madden NFL 25": 3150, "NHL 25": 3160}
+    region_options = ["US", "GB", "AU", "CA", "FR", "DE", "JP", "KR", "TH", "Other"]
+    
+    n_events = st.number_input("Number of events", min_value=1, max_value=10, value=1, step=1)
+    
+    events = []
+    # Create columns for a cleaner layout
+    event_cols = st.columns(n_events)
+    
+    for i in range(n_events):
+        with event_cols[i]:
+            st.markdown(f"##### Event {i+1}")
+            selected_game = st.selectbox(f"Game", options=list(game_options.keys()), key=f"game_{i}")
+            name = st.text_input(f"Label", key=f"name_{i}", value=selected_game)
+            date = st.date_input(f"Date", key=f"date_{i}")
+            selected_region = st.selectbox(f"Region", options=region_options, key=f"region_select_{i}")
+            region = st.text_input(f"Custom Region", key=f"region_custom_{i}") or selected_region if selected_region == "Other" else selected_region
+            events.append({"name": name, "date": datetime.combine(date, datetime.min.time()), "brandId": int(game_options[selected_game]), "brandName": selected_game, "region": region})
+
+# Add the events configured on the main page to the app_config dictionary
+app_config['events'] = events
+
+if st.button("✅ Generate Scorecard Data", use_container_width=True, type="primary"):
     if not app_config.get('openai_api_key'):
         st.error("Please enter your OpenAI API key in the sidebar to generate scorecards.")
     else:
