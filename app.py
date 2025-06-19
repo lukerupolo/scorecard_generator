@@ -120,19 +120,25 @@ if st.session_state.get('show_ppt_creator'):
             elif not st.session_state.get("sheets_dict"):
                 st.error("Please generate scorecard data first.")
             else:
-                with st.spinner(f"Building presentation with {selected_style_name} style..."):
-                    style_guide = STYLE_PRESETS[selected_style_name]
-                    scorecard_moments = [moment.strip() for moment in moments_input.split('\n') if moment.strip()]
+                try:
+                    with st.spinner(f"Building presentation with {selected_style_name} style..."):
+                        style_guide = STYLE_PRESETS[selected_style_name]
+                        scorecard_moments = [moment.strip() for moment in moments_input.split('\n') if moment.strip()]
 
-                    # The create_presentation function will now use the edited data from the session state
-                    ppt_buffer = create_presentation(
-                        title=ppt_title,
-                        subtitle=ppt_subtitle,
-                        scorecard_moments=scorecard_moments,
-                        sheets_dict=st.session_state.sheets_dict,
-                        style_guide=style_guide,
-                        region_prompt=image_region_prompt,
-                        openai_api_key=app_config['openai_api_key'] 
-                    )
-                    st.session_state["presentation_buffer"] = ppt_buffer
-                    st.rerun()
+                        # The create_presentation function will now use the edited data from the session state
+                        ppt_buffer = create_presentation(
+                            title=ppt_title,
+                            subtitle=ppt_subtitle,
+                            scorecard_moments=scorecard_moments,
+                            sheets_dict=st.session_state.sheets_dict,
+                            style_guide=style_guide,
+                            region_prompt=image_region_prompt,
+                            openai_api_key=app_config['openai_api_key'] 
+                        )
+                        st.session_state["presentation_buffer"] = ppt_buffer
+                        st.rerun()
+                except Exception as e:
+                    # NEW: Catch any error from the powerpoint module and display it
+                    st.error("Failed to generate presentation. See details below.")
+                    st.exception(e)
+
