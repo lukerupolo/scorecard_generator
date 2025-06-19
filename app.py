@@ -6,7 +6,8 @@ import pandas as pd
 # --- Local Imports from our other files ---
 from style import STYLE_PRESETS 
 from ui import render_sidebar
-from data_processing import process_scorecard_data, calculate_all_benchmarks, get_ai_metric_explanations
+# FIXED: Removed the import for the non-existent function
+from data_processing import process_scorecard_data, calculate_all_benchmarks
 from powerpoint import create_presentation
 from excel import create_excel_workbook
 
@@ -18,7 +19,7 @@ st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 # Initialize session state keys
 for key in ['api_key_entered', 'metrics_confirmed', 'benchmark_flow_complete', 'scorecard_ready', 'show_ppt_creator']:
     if key not in st.session_state: st.session_state[key] = False
-for key in ['openai_api_key', 'metrics', 'benchmark_choice', 'benchmark_df', 'sheets_dict', 'presentation_buffer', 'events_config', 'proposed_benchmarks', 'metric_explanations']:
+for key in ['openai_api_key', 'metrics', 'benchmark_choice', 'benchmark_df', 'sheets_dict', 'presentation_buffer', 'events_config', 'proposed_benchmarks']:
      if key not in st.session_state: st.session_state[key] = None
 
 st.title("Event Marketing Scorecard & Presentation Generator")
@@ -62,28 +63,15 @@ elif not st.session_state.metrics_confirmed:
                 selected_metrics.append(custom_metric)
         
         st.markdown("---")
-        col1, col2 = st.columns(2)
         
-        if col1.form_submit_button("🤖 Get AI Explanation for Selected Metrics"):
-             if selected_metrics:
-                with st.spinner("Asking AI for explanations..."):
-                    explanations = get_ai_metric_explanations(selected_metrics, st.session_state.openai_api_key)
-                    st.session_state.metric_explanations = explanations
-             else:
-                st.warning("Please select at least one metric to get an explanation.")
-
-        if col2.form_submit_button("Confirm Metrics & Proceed →", type="primary"):
+        # REMOVED: The AI explanation button has been removed for now to simplify the flow
+        if st.form_submit_button("Confirm Metrics & Proceed →", type="primary"):
             if not selected_metrics:
                 st.error("Please select at least one metric.")
             else:
                 st.session_state.metrics = selected_metrics
                 st.session_state.metrics_confirmed = True
                 st.rerun()
-            
-    if st.session_state.metric_explanations:
-        st.info("### AI Metric Explanations")
-        for metric, explanation in st.session_state.metric_explanations.items():
-            st.markdown(f"**{metric}:** {explanation}")
 
 # ================================================================================
 # Step 2: Optional Benchmark Calculation
