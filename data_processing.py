@@ -6,74 +6,62 @@ import json
 from datetime import datetime, timedelta
 
 # ================================================================================
-# NEW: AI Metric Categorization Function
+# NEW: AI Metric Categorization using OpenAI API
 # ================================================================================
-def get_ai_metric_categories(metrics: list) -> dict:
+def get_ai_metric_categories(metrics: list, api_key: str) -> dict:
     """
-    Uses the Gemini AI to categorize a list of metrics.
+    Uses the OpenAI API to categorize a list of metrics.
     Returns a dictionary mapping each metric to its category.
     """
+    if not api_key:
+        st.error("OpenAI API key is required for AI categorization. Please enter it in the sidebar.")
+        return {}
+
+    # Don't make an API call if there are no metrics to categorize
+    if not metrics:
+        return {}
+
     st.info("Asking AI to categorize metrics...")
     
-    # Create the detailed prompt for the AI model
     prompt = f"""
-    You are an expert marketing analyst. Your task is to categorize a list of metrics into one of three categories: 'Reach', 'Depth', or 'Action'.
+    You are a marketing analyst. Categorize the following metrics into 'Reach', 'Depth', or 'Action'.
+    - Reach: Did we hit sufficient scale?
+    - Depth: Did we meaningfully engage?
+    - Action: Did they take action?
 
-    Here are the definitions:
-    - **Reach**: Did we hit sufficient scale? (e.g., 'Video Views', 'Impressions', 'Social Conversation Volume')
-    - **Depth**: Did we meaningfully engage? (e.g., 'Social Sentiment', 'Average % Viewed', 'Email Open Rate')
-    - **Action**: Did they take action? (e.g., 'Labs program sign-ups', 'Discord channel sign-ups', 'Installs')
+    Metrics: {json.dumps(metrics)}
 
-    Here is the list of metrics to categorize:
-    {json.dumps(metrics)}
-
-    Return your answer *only* as a JSON array of objects, where each object has a "metric" and a "category" key. The category must be one of "Reach", "Depth", or "Action".
+    Respond *only* with a single JSON object where keys are the metrics and values are their category.
     """
 
-    # Define the expected JSON structure for the AI's response
-    response_schema = {
-        "type": "ARRAY",
-        "items": {
-            "type": "OBJECT",
-            "properties": {
-                "metric": {"type": "STRING"},
-                "category": {"type": "STRING", "enum": ["Reach", "Depth", "Action"]}
-            },
-            "required": ["metric", "category"]
-        }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "gpt-4-turbo",
+        "messages": [{"role": "user", "content": prompt}],
+        "response_format": {"type": "json_object"}, # Ensures the response is valid JSON
+        "temperature": 0.1
     }
     
-    # --- Gemini API Call for structured data ---
     try:
-        api_key = "" # Handled by the execution environment
-        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-        
-        payload = {
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "responseMimeType": "application/json",
-                "responseSchema": response_schema
-            }
-        }
-        
-        response = requests.post(api_url, json=payload, timeout=30)
+        api_url = "https://api.openai.com/v1/chat/completions"
+        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
         response.raise_for_status()
         
         result_json = response.json()
+        categorized_metrics = json.loads(result_json['choices'][0]['message']['content'])
         
-        # Extract the text part which contains the JSON string
-        content_text = result_json['candidates'][0]['content']['parts'][0]['text']
-        categorized_metrics = json.loads(content_text)
-        
-        # Convert the list of objects into a simple {metric: category} dictionary
-        return {item['metric']: item['category'] for item in categorized_metrics}
+        return categorized_metrics
 
     except requests.exceptions.RequestException as e:
-        st.error(f"AI categorization failed due to a network error: {e}")
+        st.error(f"AI categorization failed due to a network or API error: {e}")
         return {}
     except (KeyError, IndexError, json.JSONDecodeError) as e:
-        st.error(f"AI categorization failed while parsing the response: {e}")
+        st.error(f"AI categorization failed while parsing the OpenAI response: {e}")
         return {}
+
 
 # ================================================================================
 # Data Processing and Scorecard Generation
@@ -84,19 +72,21 @@ def process_scorecard_data(config: dict) -> dict:
     """
     sheets_dict = {}
     
-    # Get all unique metrics from the config to be categorized
+    # Ensure there are metrics selected before proceeding
     all_metrics = list(set(config.get('metrics', [])))
-    
-    # Call the AI function once to get all categories
-    ai_categories = get_ai_metric_categories(all_metrics)
-    if not ai_categories:
-        st.error("Could not generate AI categories. Scorecards will not be created.")
+    if not all_metrics:
+        st.warning("No metrics selected. Please select at least one metric in the sidebar.")
         return {}
-
+        
+    openai_api_key = config.get('openai_api_key')
+    ai_categories = get_ai_metric_categories(all_metrics, openai_api_key)
+    
+    if not ai_categories:
+        st.warning("Could not generate AI categories. Scorecards will be created without them.")
+    
     for idx, ev in enumerate(config['events']):
         rows_for_event = []
         for metric_name in config['metrics']:
-            # Get the category for the metric from the AI's response
             category = ai_categories.get(metric_name, "Uncategorized")
             
             row = {
@@ -110,7 +100,7 @@ def process_scorecard_data(config: dict) -> dict:
 
         df_event = pd.DataFrame(rows_for_event)
         
-        # Add a helper column for grouping and then drop it
+        # FIXED: Only perform grouping if the DataFrame is not empty
         if not df_event.empty:
             df_event['category_group'] = (df_event['Category'] != df_event['Category'].shift()).cumsum()
             df_event.loc[df_event.duplicated(subset=['category_group']), 'Category'] = ''
