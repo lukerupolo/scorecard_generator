@@ -6,7 +6,7 @@ import pandas as pd
 # --- Local Imports from our other files ---
 from style import STYLE_PRESETS 
 from ui import render_sidebar
-from data_processing import process_scorecard_data, calculate_benchmark_summary
+from data_processing import process_scorecard_data, generate_proposed_benchmark
 from powerpoint import create_presentation
 from excel import create_excel_workbook
 
@@ -54,42 +54,38 @@ elif not st.session_state.benchmark_flow_complete:
     benchmark_choice = st.radio(
         "Would you like to calculate proposed benchmark values in this session using historical data?",
         ("No, I will enter benchmarks manually later.", "Yes, calculate benchmarks from past events."),
-        key="benchmark_choice_radio"
+        key="benchmark_choice_radio",
+        index=0 if st.session_state.benchmark_choice is None else 1 # Keep selection
     )
     st.session_state.benchmark_choice = benchmark_choice
 
     if benchmark_choice == "Yes, calculate benchmarks from past events.":
         with st.form("benchmark_data_form"):
-            st.info("For each metric, enter the Baseline and Actual values from past events to calculate a new proposed benchmark.")
+            st.info("Enter the Baseline and Actual values for each metric across your past events.")
+            n_benchmark_events = st.number_input("Number of past events to use for benchmark", min_value=1, max_value=5, value=1)
             
-            # This dictionary will hold the user's input for each metric
-            historical_data_input = {}
+            benchmark_events_data = {}
+            for i in range(n_benchmark_events):
+                st.markdown(f"##### Data for Past Event {i+1}")
+                # Create a DataFrame with metrics as rows
+                df_template = pd.DataFrame({
+                    "Metric": st.session_state.metrics,
+                    "Baseline (7-day)": [None] * len(st.session_state.metrics),
+                    "Actual (7-day)": [None] * len(st.session_state.metrics)
+                }).set_index("Metric")
+                
+                # Use data_editor for this event's table
+                edited_benchmark_df = st.data_editor(df_template, key=f"benchmark_editor_{i}", use_container_width=True)
+                benchmark_events_data[f"Past Event {i+1}"] = edited_benchmark_df.reset_index()
 
-            for metric in st.session_state.metrics:
-                st.markdown(f"#### Data for: **{metric}**")
-                n_rows = st.number_input(f"Number of past events for '{metric}'", min_value=1, max_value=10, value=2, key=f"rows_{metric}")
-                
-                # Create a blank DataFrame for the user to fill in
-                df_template = pd.DataFrame([{"Baseline (7-day)": None, "Actual (7-day)": None} for _ in range(n_rows)])
-                
-                edited_df = st.data_editor(df_template, key=f"editor_{metric}", num_rows="dynamic")
-                historical_data_input[metric] = edited_df
-
-            if st.form_submit_button("Calculate All Proposed Benchmarks & Proceed →", type="primary"):
-                proposed_benchmarks = {}
-                summary_rows = []
-                with st.spinner("Analyzing historical data..."):
-                    for metric, df_input in historical_data_input.items():
-                        summary = calculate_benchmark_summary(df_input)
-                        if summary:
-                            summary['Metric'] = metric
-                            summary_rows.append(summary)
-                            proposed_benchmarks[metric] = summary.get("Proposed Benchmark")
-                
-                # Store the results in session state
-                st.session_state.benchmark_df = pd.DataFrame(summary_rows)
-                st.session_state.proposed_benchmarks = proposed_benchmarks
-                st.session_state.benchmark_flow_complete = True
+            if st.form_submit_button("Calculate Proposed Benchmark & Proceed →", type="primary"):
+                with st.spinner("Analyzing past events to generate benchmarks..."):
+                    # Pass the dictionary of event DataFrames to the calculation function
+                    benchmark_df = generate_proposed_benchmark(benchmark_events_data, st.session_state.metrics)
+                    st.session_state.benchmark_df = benchmark_df
+                    # Extract the 'Proposed Benchmark' column to pre-fill the main scorecards
+                    st.session_state.proposed_benchmarks = benchmark_df.set_index('Metric')['Proposed Benchmark'].to_dict()
+                    st.session_state.benchmark_flow_complete = True
                 st.rerun()
     else:
         if st.button("Proceed to Event Configuration →", type="primary"):
@@ -107,8 +103,4 @@ else:
     }
     
     st.header("Step 3: Configure Events & Generate Scorecard")
-    # ... (Event config and scorecard generation logic remains the same)
-    
-    if st.session_state.get('show_ppt_creator'):
-        st.header("Step 5: Create Presentation")
-        # ... (PPT creation logic remains the same)
+    # ... The rest of the app logic remains the same
