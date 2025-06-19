@@ -1,166 +1,99 @@
 import streamlit as st
-from io import BytesIO
-from datetime import datetime
 import pandas as pd
+import numpy as np
+from typing import Dict, List
 
-# --- Local Imports from our other files ---
-from style import STYLE_PRESETS 
-from ui import render_sidebar
-from data_processing import process_scorecard_data, generate_benchmark_summary
-from powerpoint import create_presentation
-from excel import create_excel_workbook
+# Note: AI categorization has been removed as per the latest workflow.
+# It can be re-added here if needed in the future.
 
-# ================================================================================
-# 1) App State Initialization
-# ================================================================================
-st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
-
-# Initialize session state keys to avoid errors on first run
-for key in ['api_key_entered', 'metrics_confirmed', 'benchmark_flow_complete', 'scorecard_ready', 'show_ppt_creator']:
-    if key not in st.session_state: st.session_state[key] = False
-for key in ['openai_api_key', 'metrics', 'benchmark_choice', 'benchmark_df', 'sheets_dict', 'presentation_buffer', 'events_config', 'proposed_benchmarks']:
-     if key not in st.session_state: st.session_state[key] = None
-
-st.title("Event Marketing Scorecard & Presentation Generator")
-app_config = render_sidebar() # Renders sidebar and gets metric selection
-
-# ================================================================================
-# Step 0: API Key Entry
-# ================================================================================
-if not st.session_state.api_key_entered:
-    st.header("Step 0: Enter Your OpenAI API Key")
-    with st.form("api_key_form"):
-        api_key_input = st.text_input("🔑 OpenAI API Key", type="password")
-        if st.form_submit_button("Submit API Key"):
-            if api_key_input:
-                st.session_state.openai_api_key = api_key_input
-                st.session_state.api_key_entered = True
-                st.rerun()
-            else:
-                st.error("Please enter a valid OpenAI API key.")
-
-# ================================================================================
-# Step 1: Optional Benchmark Calculation
-# ================================================================================
-elif not st.session_state.benchmark_flow_complete:
-    st.header("Step 1: Benchmark Calculation (Optional)")
+def process_scorecard_data(config: dict) -> dict:
+    """
+    Generates the initial scorecard structure, pre-filling benchmarks if they were calculated.
+    """
+    sheets_dict = {}
+    all_metrics = list(set(config.get('metrics', [])))
+    if not all_metrics:
+        st.warning("No metrics selected.")
+        return {}
     
-    benchmark_choice = st.radio(
-        "Would you like to calculate proposed benchmark values for this session using historical data?",
-        ("No, I will enter benchmarks manually later.", "Yes, calculate benchmarks from past events."),
-        key="benchmark_choice_radio"
+    proposed_benchmarks = config.get('proposed_benchmarks', {})
+
+    for idx, ev in enumerate(config.get('events', [])):
+        rows_for_event = []
+        for metric_name in all_metrics:
+            # Pre-fill the benchmark value if it exists, otherwise leave it blank
+            benchmark_val = proposed_benchmarks.get(metric_name)
+            
+            # The initial table has blank values, ready for manual input
+            row = {
+                "Category": "N/A",  # Category can be manually edited later
+                "Metric": metric_name, 
+                "Actuals": None, 
+                "Benchmark": benchmark_val, 
+                "% Difference": None
+            }
+            rows_for_event.append(row)
+
+        df_event = pd.DataFrame(rows_for_event)
+        
+        unique_key = f"{ev['name'][:24] or f'Event {idx+1}'} - {idx+1}"
+        sheets_dict[unique_key] = df_event
+        
+    return sheets_dict
+
+def generate_benchmark_summary(
+    historical_data: Dict[str, pd.DataFrame]
+) -> (pd.DataFrame, Dict):
+    """
+    Takes a dictionary of historical event DataFrames and calculates the final
+    proposed benchmark summary table based on the specified logic.
+    """
+    # Combine all historical event data into a single DataFrame
+    all_events_df = pd.concat(historical_data.values(), ignore_index=True)
+
+    # Ensure data is numeric and drop rows with missing values
+    all_events_df['Baseline (7-day)'] = pd.to_numeric(all_events_df['Baseline (7-day)'], errors='coerce')
+    all_events_df['Actual (7-day)'] = pd.to_numeric(all_events_df['Actual (7-day)'], errors='coerce')
+    all_events_df.dropna(subset=['Baseline (7-day)', 'Actual (7-day)'], inplace=True)
+
+    if all_events_df.empty:
+        st.warning("No valid historical data was entered to calculate benchmarks.")
+        return pd.DataFrame(), {}
+
+    # --- Perform Calculations as per the specified logic ---
+    
+    # Calculate Uplift % for each individual historical data row
+    all_events_df['Uplift %'] = ((all_events_df['Actual (7-day)'] - all_events_df['Baseline (7-day)']) / all_events_df['Baseline (7-day)']) * 100
+
+    # Group by metric to calculate averages
+    grouped = all_events_df.groupby('Metric')
+    
+    avg_actuals = grouped['Actual (7-day)'].mean()
+    avg_baselines = grouped['Baseline (7-day)'].mean()
+    avg_uplift_pct = grouped['Uplift %'].mean()
+    
+    # Assemble the summary DataFrame
+    summary_df = pd.DataFrame({
+        "Avg. Actuals": avg_actuals,
+        "Baseline Method": avg_baselines,
+        "Baseline Uplift Expect. (%)": avg_uplift_pct
+    }).reset_index()
+
+    # Calculate the Proposed Benchmark using the calculated averages
+    summary_df['Proposed Benchmark'] = summary_df.apply(
+        lambda row: np.median([row['Avg. Actuals'], row['Baseline Method']]),
+        axis=1
     )
+    
+    # --- Formatting for Final Display ---
+    final_cols = ["Metric", "Avg. Actuals", "Baseline Method", "Baseline Uplift Expect. (%)", "Proposed Benchmark"]
+    summary_df = summary_df[final_cols]
+    
+    for col in ["Avg. Actuals", "Baseline Method", "Proposed Benchmark"]:
+        summary_df[col] = summary_df[col].round(2)
+    summary_df['Baseline Uplift Expect. (%)'] = summary_df['Baseline Uplift Expect. (%)'].apply(lambda x: f"{x:.2f}%")
 
-    if benchmark_choice == "Yes, calculate benchmarks from past events.":
-        with st.form("benchmark_data_form"):
-            st.info("For each past event, enter the Baseline and Actual values for all metrics.")
-            n_benchmark_events = st.number_input("Number of past events to use for benchmark", min_value=1, max_value=10, value=1)
-            
-            historical_data_input = {}
-            for i in range(n_benchmark_events):
-                st.markdown(f"##### Data for Past Event {i+1}")
-                df_template = pd.DataFrame({
-                    "Metric": app_config['metrics'],
-                    "Baseline (7-day)": [None] * len(app_config['metrics']),
-                    "Actual (7-day)": [None] * len(app_config['metrics'])
-                }).set_index("Metric")
-                
-                edited_df = st.data_editor(df_template, key=f"hist_editor_{i}", use_container_width=True)
-                historical_data_input[f"Past Event {i+1}"] = edited_df.reset_index()
+    # Create the simple dictionary to pass to the next step
+    proposed_benchmarks_dict = summary_df.set_index('Metric')['Proposed Benchmark'].to_dict()
 
-            if st.form_submit_button("Calculate Proposed Benchmark & Proceed →", type="primary"):
-                with st.spinner("Analyzing historical data..."):
-                    summary_df, proposed_benchmarks = generate_benchmark_summary(historical_data_input)
-                    st.session_state.benchmark_df = summary_df
-                    st.session_state.proposed_benchmarks = proposed_benchmarks
-                    st.session_state.benchmark_flow_complete = True
-                st.rerun()
-    else:
-        if st.button("Proceed to Event Configuration →", type="primary"):
-            st.session_state.benchmark_flow_complete = True
-            st.rerun()
-
-# ================================================================================
-# Step 2, 3, 4 - Main App Logic
-# ================================================================================
-else:
-    app_config['openai_api_key'] = st.session_state.openai_api_key
-    app_config['proposed_benchmarks'] = st.session_state.get('proposed_benchmarks')
-
-    st.header("Step 2: Configure Events & Generate Scorecard")
-    with st.expander("Configure Events for this Scorecard", expanded=True):
-        n_events = st.number_input("Number of events for this scorecard", min_value=1, max_value=10, value=1, step=1)
-        events = []
-        event_cols = st.columns(n_events)
-        for i in range(n_events):
-            with event_cols[i]:
-                st.markdown(f"##### Event {i+1}")
-                name = st.text_input(f"Label", key=f"name_{i}", value=f"Event {i+1}")
-                events.append({"name": name})
-    app_config['events'] = events
-
-    if st.button("✅ Generate Scorecard Structure", use_container_width=True, type="primary"):
-        with st.spinner("Building scorecards..."):
-            sheets_dict = process_scorecard_data(app_config)
-            st.session_state["sheets_dict"] = sheets_dict
-            st.session_state["scorecard_ready"] = True
-        st.rerun()
-
-    if st.session_state.scorecard_ready and st.session_state.sheets_dict:
-        st.markdown("---")
-        st.header("Step 3: Review & Edit Data")
-
-        if st.session_state.benchmark_df is not None and not st.session_state.benchmark_df.empty:
-            st.markdown("#### ✨ Proposed Benchmark Summary")
-            st.dataframe(st.session_state.benchmark_df, use_container_width=True)
-            st.markdown("---")
-        
-        for name, df in st.session_state.sheets_dict.items():
-            st.markdown(f"#### Edit Scorecard: {name}")
-            edited_df = st.data_editor(df, key=f"editor_{name}", use_container_width=True, num_rows="dynamic")
-            
-            edited_df['Actuals'] = pd.to_numeric(edited_df['Actuals'], errors='coerce')
-            edited_df['Benchmark'] = pd.to_numeric(edited_df['Benchmark'], errors='coerce')
-            edited_df['% Difference'] = ((edited_df['Actuals'] - edited_df['Benchmark']) / edited_df['Benchmark']).apply(lambda x: f"{x:.1%}" if pd.notna(x) else None)
-            st.session_state.sheets_dict[name] = edited_df
-        
-        st.markdown("---")
-        if st.session_state.sheets_dict:
-            excel_buffer = create_excel_workbook(st.session_state.sheets_dict)
-            st.download_button(label="📥 Download as Excel Workbook", data=excel_buffer, file_name="full_scorecard.xlsx", use_container_width=True)
-        st.markdown("---")
-        st.session_state['show_ppt_creator'] = True
-
-    if st.session_state.get('show_ppt_creator'):
-        st.header("Step 4: Create Presentation")
-        if st.session_state.get("presentation_buffer"):
-            st.download_button(label="✅ Download Your Presentation!", data=st.session_state.presentation_buffer, file_name="game_scorecard_presentation.pptx", use_container_width=True)
-
-        with st.form("ppt_form"):
-            st.subheader("Presentation Style & Details")
-            col1, col2 = st.columns(2)
-            selected_style_name = col1.radio("Select Style Preset:", options=list(STYLE_PRESETS.keys()), horizontal=True)
-            image_region_prompt = col2.text_input("Region for AI Background Image", "Brazil")
-            ppt_title = st.text_input("Presentation Title", "Game Scorecard")
-            ppt_subtitle = st.text_input("Presentation Subtitle", "A detailed analysis")
-            moments_input = st.text_area("Scorecard Moments (one per line)", "Pre-Reveal\nLaunch", height=100)
-            submitted = st.form_submit_button("Generate Presentation", use_container_width=True)
-
-            if submitted:
-                if not st.session_state.get("sheets_dict"):
-                    st.error("Please generate scorecard data first.")
-                else:
-                    with st.spinner(f"Building presentation with {selected_style_name} style..."):
-                        style_guide = STYLE_PRESETS[selected_style_name]
-                        scorecard_moments = [moment.strip() for moment in moments_input.split('\n') if moment.strip()]
-                        ppt_buffer = create_presentation(
-                            title=ppt_title,
-                            subtitle=ppt_subtitle,
-                            scorecard_moments=scorecard_moments,
-                            sheets_dict=st.session_state.sheets_dict,
-                            style_guide=style_guide,
-                            region_prompt=image_region_prompt,
-                            openai_api_key=st.session_state.openai_api_key 
-                        )
-                        st.session_state["presentation_buffer"] = ppt_buffer
-                        st.rerun()
+    return summary_df, proposed_benchmarks_dict
