@@ -1,4 +1,6 @@
+# steps/step_1_metric_selection.py
 import streamlit as st
+from data_processing import get_ai_metric_categories
 
 def render():
     st.header("Step 1: Metric Selection")
@@ -6,8 +8,9 @@ def render():
     if 'current_metrics' not in st.session_state:
         st.session_state.current_metrics = ["Video views (Franchise)", "Social Impressions"]
 
-    st.info("Select metrics from the dropdown, or add your own below. Press Enter to add a custom metric.")
-
+    st.info("Select or add metrics. When you confirm, we will use AI to categorize them.")
+    
+    # --- (Metric selection UI remains the same as before) ---
     predefined_metrics = [
         "Video views (Franchise)", "Social Impressions", "Press UMV (unique monthly views)",
         "Social Conversation Volume", "Views trailer", "UGC Views", 
@@ -17,12 +20,9 @@ def render():
         "Discord channel sign-ups", "% Trailer views from Discord (Youtube)",
         "Labs sign up click-through Web", "Sessions", "DAU", "Hours Watched (Streams)"
     ]
-
     all_possible_metrics = sorted(list(set(predefined_metrics + st.session_state.current_metrics)))
-
     def update_selections():
         st.session_state.current_metrics = st.session_state.multiselect_key
-
     st.multiselect(
         "Select metrics:", 
         options=all_possible_metrics, 
@@ -30,26 +30,32 @@ def render():
         key="multiselect_key",
         on_change=update_selections
     )
-
     def add_custom_metric():
         custom_metric = st.session_state.custom_metric_input.strip()
         if custom_metric and custom_metric not in st.session_state.current_metrics:
             st.session_state.current_metrics.append(custom_metric)
         st.session_state.custom_metric_input = ""
-
     st.text_input(
         "✍️ Add Custom Metric (and press Enter)", 
         key="custom_metric_input", 
         on_change=add_custom_metric
     )
-
     st.markdown("---")
+    # --- (End of unchanged UI section) ---
 
     if st.button("Confirm Metrics & Proceed →", type="primary"):
         if not st.session_state.current_metrics:
             st.error("Please select at least one metric.")
         else:
             st.session_state.metrics = st.session_state.current_metrics
+            
+            # --- NEW: AI Categorization is now run in this step ---
+            with st.spinner("Using AI to categorize your metrics..."):
+                st.session_state.ai_categories = get_ai_metric_categories(
+                    st.session_state.metrics, 
+                    st.session_state.openai_api_key
+                )
+            
             st.session_state.metrics_confirmed = True
             del st.session_state.current_metrics
             st.rerun()
