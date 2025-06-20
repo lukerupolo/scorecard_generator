@@ -11,44 +11,26 @@ from powerpoint import create_presentation
 from excel import create_excel_workbook
 
 # ================================================================================
-# 1) App State Initialization (Robust Version)
+# 1) App State Initialization
 # ================================================================================
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
-# This versioning system forces the app state to reset when you update the code.
-APP_VERSION = "1.0.1" 
+# Initialize session state keys
+for key in ['api_key_entered', 'metrics_confirmed', 'benchmark_flow_complete', 'scorecard_ready', 'show_ppt_creator']:
+    if key not in st.session_state: st.session_state[key] = False
+for key in ['openai_api_key', 'metrics', 'benchmark_choice', 'benchmark_df', 'sheets_dict', 'presentation_buffer', 'events_config', 'proposed_benchmarks', 'avg_actuals', 'n_benchmark_events']:
+     if key not in st.session_state: st.session_state[key] = None
 
-if 'app_version' not in st.session_state or st.session_state.app_version != APP_VERSION:
-    # Preserve the API key if it exists
-    api_key = st.session_state.get('openai_api_key')
-    
-    # Clear all keys from the session state
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    
-    # Now, initialize all keys to their default values
-    st.session_state.app_version = APP_VERSION
-    st.session_state.api_key_entered = True if api_key else False
-    st.session_state.openai_api_key = api_key
-    st.session_state.metrics_confirmed = False
-    st.session_state.benchmark_flow_complete = False
-    st.session_state.scorecard_ready = False
-    st.session_state.show_ppt_creator = False
-    st.session_state.metrics = []
-    st.session_state.benchmark_choice = "No, I will enter benchmarks manually later."
-    st.session_state.benchmark_df = pd.DataFrame()
-    st.session_state.sheets_dict = {}
-    st.session_state.presentation_buffer = None
-    st.session_state.events_config = []
-    st.session_state.proposed_benchmarks = {}
-    st.session_state.saved_moments = {}
+# Initialize specific values if they are None
+if st.session_state.saved_moments is None: st.session_state.saved_moments = {}
+if st.session_state.n_benchmark_events is None: st.session_state.n_benchmark_events = 1
 
 
 st.title("Event Marketing Scorecard & Presentation Generator")
 render_sidebar()
 
 # ================================================================================
-# Step 0: API Key Entry
+# Step 0 & 1: API Key and Metric Selection
 # ================================================================================
 if not st.session_state.api_key_entered:
     st.header("Step 0: Enter Your OpenAI API Key")
@@ -62,9 +44,6 @@ if not st.session_state.api_key_entered:
             else:
                 st.error("Please enter a valid OpenAI API key.")
 
-# ================================================================================
-# Step 1: Metric Selection
-# ================================================================================
 elif not st.session_state.metrics_confirmed:
     st.header("Step 1: Metric Selection")
     with st.form("metrics_form"):
@@ -90,12 +69,19 @@ elif not st.session_state.benchmark_flow_complete:
     )
 
     if benchmark_choice == "Yes, calculate benchmarks from past events.":
+        # --- FIXED: Moved number input outside the form to correctly control the UI ---
+        st.number_input(
+            "Number of past events to use for benchmark", 
+            min_value=1, max_value=10, 
+            key="n_benchmark_events" # Bind the value to session state
+        )
+        
         with st.form("benchmark_data_form"):
             st.info("For each past event, enter the Baseline and Actual values for all selected metrics.")
-            n_benchmark_events = st.number_input("Number of past events to use for benchmark", min_value=1, max_value=10, value=1)
             
             historical_data_input = {}
-            for i in range(n_benchmark_events):
+            # The loop now correctly uses the value from session state to render the tables
+            for i in range(st.session_state.n_benchmark_events):
                 st.markdown(f"--- \n ##### Data for Past Event {i+1}")
                 df_template = pd.DataFrame({
                     "Metric": st.session_state.metrics,
@@ -129,6 +115,9 @@ else:
         'proposed_benchmarks': st.session_state.get('proposed_benchmarks'),
         'avg_actuals': st.session_state.get('avg_actuals')
     }
+    
+    # ... (Rest of the app logic for displaying scorecards and generating the presentation)
+
     
     # --- Step 3: Build & Save Scorecard Moments ---
     st.header("Step 3: Build & Save Scorecard Moments")
