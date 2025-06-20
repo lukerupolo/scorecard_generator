@@ -25,7 +25,7 @@ from steps import (
 )
 
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
-APP_VERSION = "6.0.6" # Incremented version
+APP_VERSION = "6.0.7" # Incremented version
 
 def initialize_state():
     """Initializes all session state variables."""
