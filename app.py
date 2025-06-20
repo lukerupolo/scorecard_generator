@@ -33,7 +33,15 @@ render_sidebar()
 # ================================================================================
 if not st.session_state.api_key_entered:
     st.header("Step 0: Enter Your OpenAI API Key")
-    # ... (API Key form logic)
+    with st.form("api_key_form"):
+        openai_api_key = st.text_input("OpenAI API Key", type="password", help="Get your key from https://platform.openai.com/account/api-keys")
+        submitted = st.form_submit_button("Submit")
+        if submitted and openai_api_key:
+            st.session_state.openai_api_key = openai_api_key
+            st.session_state.api_key_entered = True
+            st.rerun()
+        elif submitted:
+            st.error("Please enter your OpenAI API key.")
 elif not st.session_state.metrics_confirmed:
     st.header("Step 1: Metric Selection")
     # ... (Metric Selection form logic)
