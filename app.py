@@ -15,14 +15,18 @@ from excel import create_excel_workbook
 # ================================================================================
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
-# This versioning system helps reset the state when you update the code.
-APP_VERSION = "2.1.0" 
+# This versioning system helps reset the state when the app is updated
+APP_VERSION = "2.0.0" 
 
 if 'app_version' not in st.session_state or st.session_state.app_version != APP_VERSION:
+    # Preserve the API key if it exists
     api_key = st.session_state.get('openai_api_key')
+    
+    # Clear all keys from the session state
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     
+    # Now, initialize all keys to their default values
     st.session_state.app_version = APP_VERSION
     st.session_state.api_key_entered = True if api_key else False
     st.session_state.openai_api_key = api_key
@@ -47,31 +51,21 @@ render_sidebar()
 # ================================================================================
 if not st.session_state.api_key_entered:
     st.header("Step 0: Enter Your OpenAI API Key")
-    with st.form("api_key_form"):
-        api_key_input = st.text_input("🔑 OpenAI API Key", type="password")
-        if st.form_submit_button("Submit API Key"):
-            st.session_state.openai_api_key = api_key_input
-            st.session_state.api_key_entered = True
-            st.rerun()
+    # ... (API Key form logic)
 
 # ================================================================================
 # Step 1: Metric Selection
 # ================================================================================
 elif not st.session_state.metrics_confirmed:
     st.header("Step 1: Metric Selection")
-    with st.form("metrics_form"):
-        selected_metrics = st.multiselect("Select metrics:", options=["Video views (Franchise)", "Social Impressions", "Press UMV (unique monthly views)"], default=["Video views (Franchise)"])
-        if st.form_submit_button("Confirm Metrics & Proceed →", type="primary"):
-            st.session_state.metrics = selected_metrics
-            st.session_state.metrics_confirmed = True
-            st.rerun()
+    # ... (Metric Selection form logic)
 
 # ================================================================================
 # Step 2: Optional Benchmark Calculation
 # ================================================================================
 elif not st.session_state.benchmark_flow_complete:
     st.header("Step 2: Benchmark Calculation (Optional)")
-    # ... (Benchmark logic remains here) ...
+    # ... (Benchmark calculation logic)
 
 # ================================================================================
 # Step 3, 4, 5 - Main App Logic
@@ -91,7 +85,7 @@ else:
     if st.session_state.sheets_dict is None:
         st.session_state.sheets_dict = process_scorecard_data(app_config)
 
-    st.info("Fill in the 'Actuals' and 'Benchmark' columns for the current scorecard, give it a name, and save it. You can create multiple moments.")
+    st.info("Fill in the 'Actuals' for the current scorecard moment, give it a name, and save it. You can create multiple moments.")
 
     current_scorecard_df = next(iter(st.session_state.sheets_dict.values()), None)
 
@@ -111,7 +105,7 @@ else:
             if moment_name:
                 st.session_state.saved_moments[moment_name] = edited_df
                 st.success(f"Saved moment: '{moment_name}'")
-                st.session_state.sheets_dict = None # Clear the editor to allow a new moment to be created
+                st.session_state.sheets_dict = None # Clear the editor for the next moment
                 st.rerun()
             else:
                 st.error("Please enter a name for the moment before saving.")
@@ -136,6 +130,7 @@ else:
         with st.form("ppt_form"):
             st.subheader("Presentation Style & Details")
             
+            # FIXED: Dropdown to select from saved moments
             if st.session_state.saved_moments:
                 selected_moments = st.multiselect("Select which saved moments to include in the presentation:",
                     options=list(st.session_state.saved_moments.keys()),
@@ -143,8 +138,6 @@ else:
             else:
                 st.warning("No scorecard moments saved yet. Please save at least one moment above.")
                 selected_moments = []
-
-            # ... (Rest of the form and presentation logic)
 
             col1, col2 = st.columns(2)
             selected_style_name = col1.radio("Select Style Preset:", options=list(STYLE_PRESETS.keys()), horizontal=True)
