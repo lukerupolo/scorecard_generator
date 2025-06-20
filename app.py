@@ -5,8 +5,9 @@ import pandas as pd
 # The 'sys' and 'os' path fixes are removed as they are no longer needed
 # with the correct package structure (__init__.py files).
 
-from ui import render_sidebar
-from steps import (
+# --- Explicit Imports from the project root directory ---
+from scorecard_generator.ui import render_sidebar
+from scorecard_generator.steps import (
     step_0_api_key,
     step_1_metric_selection,
     step_2_benchmark_strategy,
@@ -17,7 +18,7 @@ from steps import (
 )
 
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
-APP_VERSION = "6.0.3" # Incremented version
+APP_VERSION = "6.0.4" # Incremented version
 
 def initialize_state():
     """Initializes all session state variables."""
