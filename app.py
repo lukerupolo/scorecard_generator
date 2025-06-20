@@ -1,19 +1,10 @@
 # app.py
 import streamlit as st
 import pandas as pd
-import sys
-import os
 
-# --- Robust Path Fix for Streamlit Cloud ---
-# Get the absolute path of the directory containing this script (app.py).
-# This is the root of our project.
-PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
+# The 'sys' and 'os' path fixes are removed as they are no longer needed
+# with the correct package structure (__init__.py files).
 
-# Add the project root to the Python path if it's not already there.
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
-
-# Now Python can find the 'ui' and 'steps' modules within this directory.
 from ui import render_sidebar
 from steps import (
     step_0_api_key,
@@ -26,7 +17,7 @@ from steps import (
 )
 
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
-APP_VERSION = "6.0.2" # Incremented version
+APP_VERSION = "6.0.3" # Incremented version
 
 def initialize_state():
     """Initializes all session state variables."""
