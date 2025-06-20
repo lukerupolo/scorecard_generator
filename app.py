@@ -6,7 +6,7 @@ import pandas as pd
 # --- Local Imports from our other files ---
 from style import STYLE_PRESETS 
 from ui import render_sidebar
-from data_processing import process_scorecard_data, generate_benchmark_summary
+from data_processing import process_scorecard_data, calculate_all_benchmarks
 from powerpoint import create_presentation
 from excel import create_excel_workbook
 
@@ -18,19 +18,17 @@ st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 # Initialize session state keys
 for key in ['api_key_entered', 'metrics_confirmed', 'benchmark_flow_complete', 'scorecard_ready', 'show_ppt_creator']:
     if key not in st.session_state: st.session_state[key] = False
-for key in ['openai_api_key', 'metrics', 'benchmark_choice', 'benchmark_df', 'sheets_dict', 'presentation_buffer', 'events_config', 'proposed_benchmarks', 'avg_actuals', 'n_benchmark_events']:
+for key in ['openai_api_key', 'metrics', 'benchmark_choice', 'benchmark_df', 'sheets_dict', 'presentation_buffer', 'events_config', 'proposed_benchmarks', 'avg_actuals', 'saved_moments']:
      if key not in st.session_state: st.session_state[key] = None
 
-# Initialize specific values if they are None
-if st.session_state.saved_moments is None: st.session_state.saved_moments = {}
-if st.session_state.n_benchmark_events is None: st.session_state.n_benchmark_events = 1
-
+if st.session_state.saved_moments is None:
+    st.session_state.saved_moments = {}
 
 st.title("Event Marketing Scorecard & Presentation Generator")
 render_sidebar()
 
 # ================================================================================
-# Step 0 & 1: API Key and Metric Selection
+# Step 0: API Key Entry
 # ================================================================================
 if not st.session_state.api_key_entered:
     st.header("Step 0: Enter Your OpenAI API Key")
@@ -44,20 +42,37 @@ if not st.session_state.api_key_entered:
             else:
                 st.error("Please enter a valid OpenAI API key.")
 
+# ================================================================================
+# Step 1: Metric Selection (Now with Custom Input)
+# ================================================================================
 elif not st.session_state.metrics_confirmed:
     st.header("Step 1: Metric Selection")
     with st.form("metrics_form"):
-        selected_metrics = st.multiselect("Select metrics:", options=["Video views (Franchise)", "Social Impressions", "Press UMV (unique monthly views)"], default=["Video views (Franchise)"])
+        st.info("Select metrics from the dropdown, or paste your own list below (one metric per line).")
+        predefined_metrics = [
+            "Video views (Franchise)", "Social Impressions", "Press UMV (unique monthly views)",
+            "Social Conversation Volume", "Views trailer", "UGC Views", 
+            "Social Impressions-Posts with trailer (FB, IG, X)", "Social Impressions-All posts"
+        ]
+        selected_metrics = st.multiselect("Select metrics:", options=predefined_metrics, default=["Video views (Franchise)", "Social Impressions"])
+        
+        custom_metrics_input = st.text_area("Or, paste a custom list of metrics (one per line):")
+
         if st.form_submit_button("Confirm Metrics & Proceed →", type="primary"):
-            if not selected_metrics:
-                st.error("Please select at least one metric.")
+            final_metrics = selected_metrics
+            if custom_metrics_input:
+                # Use the custom list if provided
+                final_metrics = [m.strip() for m in custom_metrics_input.split('\n') if m.strip()]
+            
+            if not final_metrics:
+                st.error("Please select or enter at least one metric.")
             else:
-                st.session_state.metrics = selected_metrics
+                st.session_state.metrics = final_metrics
                 st.session_state.metrics_confirmed = True
                 st.rerun()
 
 # ================================================================================
-# Step 2: Optional Benchmark Calculation
+# Step 2: Optional Benchmark Calculation (with Baseline Method Input)
 # ================================================================================
 elif not st.session_state.benchmark_flow_complete:
     st.header("Step 2: Benchmark Calculation (Optional)")
@@ -69,32 +84,30 @@ elif not st.session_state.benchmark_flow_complete:
     )
 
     if benchmark_choice == "Yes, calculate benchmarks from past events.":
-        # --- FIXED: Moved number input outside the form to correctly control the UI ---
-        st.number_input(
-            "Number of past events to use for benchmark", 
-            min_value=1, max_value=10, 
-            key="n_benchmark_events" # Bind the value to session state
-        )
-        
         with st.form("benchmark_data_form"):
-            st.info("For each past event, enter the Baseline and Actual values for all selected metrics.")
+            st.info("For each metric, provide its 3-month average from your external tool, then enter the Baseline and Actual values from past events to calculate the expected uplift.")
             
-            historical_data_input = {}
-            # The loop now correctly uses the value from session state to render the tables
-            for i in range(st.session_state.n_benchmark_events):
-                st.markdown(f"--- \n ##### Data for Past Event {i+1}")
-                df_template = pd.DataFrame({
-                    "Metric": st.session_state.metrics,
-                    "Baseline (7-day)": [None] * len(st.session_state.metrics),
-                    "Actual (7-day)": [None] * len(st.session_state.metrics)
-                }).set_index("Metric")
+            historical_inputs = {}
+            for metric in st.session_state.metrics:
+                st.markdown(f"--- \n #### Data for: **{metric}**")
                 
-                edited_df = st.data_editor(df_template, key=f"hist_editor_{i}", use_container_width=True)
-                historical_data_input[f"Past Event {i+1}"] = edited_df.reset_index()
+                # NEW: Input for the Baseline Method (3-Month Average)
+                three_month_avg = st.number_input(
+                    f"3-Month Average (Baseline Method) for '{metric}'", 
+                    min_value=0.0, 
+                    format="%.2f", 
+                    key=f"3m_avg_{metric}"
+                )
+                
+                # Table for historical event data
+                df_template = pd.DataFrame([{"Event Name": "Past Event 1", "Baseline (7-day)": None, "Actual (7-day)": None}])
+                edited_df = st.data_editor(df_template, key=f"hist_editor_{metric}", num_rows="dynamic", use_container_width=True)
+                
+                historical_inputs[metric] = {"historical_df": edited_df, "three_month_avg": three_month_avg}
 
-            if st.form_submit_button("Calculate Proposed Benchmark & Proceed →", type="primary"):
+            if st.form_submit_button("Calculate All Proposed Benchmarks & Proceed →", type="primary"):
                 with st.spinner("Analyzing historical data..."):
-                    summary_df, proposed_benchmarks, avg_actuals = generate_benchmark_summary(historical_data_input, st.session_state.metrics)
+                    summary_df, proposed_benchmarks, avg_actuals = calculate_all_benchmarks(historical_inputs)
                     st.session_state.benchmark_df = summary_df
                     st.session_state.proposed_benchmarks = proposed_benchmarks
                     st.session_state.avg_actuals = avg_actuals
@@ -116,55 +129,41 @@ else:
         'avg_actuals': st.session_state.get('avg_actuals')
     }
     
-    # ... (Rest of the app logic for displaying scorecards and generating the presentation)
+    if not st.session_state.scorecard_ready:
+        with st.spinner("Categorizing metrics with AI and building scorecard..."):
+            st.session_state.sheets_dict = process_scorecard_data(app_config)
+            st.session_state.scorecard_ready = True
+        st.rerun()
+            
+    if st.session_state.scorecard_ready and st.session_state.sheets_dict:
+        st.header("Step 3: Review & Edit Final Scorecard")
 
-    
-    # --- Step 3: Build & Save Scorecard Moments ---
-    st.header("Step 3: Build & Save Scorecard Moments")
-    
-    # Generate a blank scorecard structure if one isn't already being edited
-    if st.session_state.sheets_dict is None:
-        app_config['events'] = [{"name": "Current Moment"}] # A placeholder name
-        st.session_state.sheets_dict = process_scorecard_data(app_config)
-
-    st.info("Fill in the 'Actuals' for the current scorecard moment, give it a name, and save it. You can create multiple moments.")
-
-    current_scorecard_df = next(iter(st.session_state.sheets_dict.values()), None)
-
-    if current_scorecard_df is not None:
-        edited_df = st.data_editor(
-            current_scorecard_df, key="moment_editor",
-            use_container_width=True, num_rows="dynamic"
-        )
-        edited_df['Actuals'] = pd.to_numeric(edited_df['Actuals'], errors='coerce')
-        edited_df['Benchmark'] = pd.to_numeric(edited_df['Benchmark'], errors='coerce')
-        edited_df['% Difference'] = ((edited_df['Actuals'] - edited_df['Benchmark']) / edited_df['Benchmark']).apply(lambda x: f"{x:.1%}" if pd.notna(x) else None)
+        if st.session_state.benchmark_df is not None and not st.session_state.benchmark_df.empty:
+            st.markdown("#### ✨ Proposed Benchmark Summary")
+            st.dataframe(st.session_state.benchmark_df.set_index("Metric"), use_container_width=True)
+            st.markdown("---")
         
-        col1, col2 = st.columns([3, 1])
-        moment_name = col1.text_input("Name for this Scorecard Moment", placeholder="e.g., Pre-Reveal, Launch Week")
+        for name, df in st.session_state.sheets_dict.items():
+            st.markdown(f"#### {name}")
+            edited_df = st.data_editor(df, key=f"editor_{name}", use_container_width=True, num_rows="dynamic")
+            
+            # --- FIXED: Automatically recalculate % Difference after edits ---
+            edited_df['Actuals'] = pd.to_numeric(edited_df['Actuals'], errors='coerce')
+            edited_df['Benchmark'] = pd.to_numeric(edited_df['Benchmark'], errors='coerce')
+            edited_df['% Difference'] = ((edited_df['Actuals'] - edited_df['Benchmark']) / edited_df['Benchmark']).apply(lambda x: f"{x:.1%}" if pd.notna(x) else None)
+            st.session_state.sheets_dict[name] = edited_df
         
-        if col2.button("💾 Save Moment", use_container_width=True, type="primary"):
-            if moment_name:
-                st.session_state.saved_moments[moment_name] = edited_df
-                st.success(f"Saved moment: '{moment_name}'")
-                st.session_state.sheets_dict = None # Clear the editor for the next moment
-                st.rerun()
-            else:
-                st.error("Please enter a name for the moment before saving.")
-
-    # Display the list of saved moments
-    if st.session_state.saved_moments:
         st.markdown("---")
-        st.subheader("Saved Scorecard Moments")
-        for name, df in st.session_state.saved_moments.items():
-            with st.expander(f"View Moment: {name}"):
-                st.dataframe(df, use_container_width=True)
-        st.session_state.show_ppt_creator = True
+        if st.session_state.sheets_dict:
+            excel_buffer = create_excel_workbook(st.session_state.sheets_dict)
+            st.download_button(label="📥 Download as Excel Workbook", data=excel_buffer, file_name="full_scorecard.xlsx", use_container_width=True)
+        st.markdown("---")
+        st.session_state['show_ppt_creator'] = True
 
-    # --- Step 4: Create Presentation ---
     if st.session_state.get('show_ppt_creator'):
-        st.markdown("---")
-        st.header("Step 4: Create Your Presentation")
+        st.header("Step 4: Create Presentation")
+        # ... (PPT creation logic remains the same)
+
         
         if st.session_state.get("presentation_buffer"):
             st.download_button(label="✅ Download Your Presentation!", data=st.session_state.presentation_buffer, file_name="game_scorecard_presentation.pptx", use_container_width=True)
