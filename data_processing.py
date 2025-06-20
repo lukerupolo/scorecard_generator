@@ -5,7 +5,7 @@ from typing import Dict, List
 
 def process_scorecard_data(config: dict) -> dict:
     """
-    Generates the initial scorecard structure, pre-filling 'Actuals' and 'Benchmark' 
+    Generates the final scorecard structure, pre-filling 'Actuals' and 'Benchmark' 
     if they were calculated in the previous step.
     """
     sheets_dict = {}
@@ -14,14 +14,11 @@ def process_scorecard_data(config: dict) -> dict:
         st.warning("No metrics selected.")
         return {}
     
-    # --- FIXED: Safely handle cases where benchmark data was not generated ---
-    # Default to an empty dictionary if the keys are missing or None.
     proposed_benchmarks = config.get('proposed_benchmarks') or {}
     avg_actuals = config.get('avg_actuals') or {}
 
     rows_for_event = []
     for metric_name in all_metrics:
-        # Pre-fill the benchmark and actuals values if they exist
         benchmark_val = proposed_benchmarks.get(metric_name)
         actual_val = avg_actuals.get(metric_name)
         
@@ -39,12 +36,7 @@ def generate_benchmark_summary(
     """
     Takes a dictionary of historical event DataFrames and calculates the final
     proposed benchmark summary table based on the specified logic.
-    Returns:
-    1. The summary DataFrame for display.
-    2. A dictionary of {metric: proposed_benchmark}.
-    3. A dictionary of {metric: avg_actual}.
     """
-    # Combine all historical event data into a single DataFrame
     all_events_df = pd.concat(historical_data.values(), ignore_index=True)
     
     all_events_df['Baseline (7-day)'] = pd.to_numeric(all_events_df['Baseline (7-day)'], errors='coerce')
@@ -55,7 +47,7 @@ def generate_benchmark_summary(
         st.warning("No valid historical data was entered to calculate benchmarks.")
         return pd.DataFrame(), {}, {}
 
-    # --- Perform Calculations as per the specified logic ---
+    # --- Perform Calculations Exactly as Specified ---
     
     # Calculate Uplift % for each individual historical data row
     all_events_df['Uplift %'] = ((all_events_df['Actual (7-day)'] - all_events_df['Baseline (7-day)']) / all_events_df['Baseline (7-day)']) * 100
