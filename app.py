@@ -4,10 +4,10 @@ import pandas as pd
 import sys
 import os
 
-# This is the crucial part: Add the project's root directory to the Python path
-# This allows the app to find the 'steps' and 'strategy' modules
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+# No longer need sys.path manipulation
+# sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
+# Imports are now relative to the root of the project
 from ui import render_sidebar
 from steps import (
     step_0_api_key,
@@ -20,7 +20,7 @@ from steps import (
 )
 
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
-APP_VERSION = "6.0.0"
+APP_VERSION = "6.0.1" # Incremented version
 
 def initialize_state():
     """Initializes all session state variables."""
@@ -33,7 +33,7 @@ def initialize_state():
     st.session_state.api_key_entered = True if api_key else False
     st.session_state.openai_api_key = api_key
     st.session_state.metrics_confirmed = False
-    st.session_state.strategy_profile_generated = False # NEW
+    st.session_state.strategy_profile_generated = False 
     st.session_state.comparability_analysis_complete = False
     st.session_state.benchmark_flow_complete = False
     st.session_state.scorecard_ready = False
