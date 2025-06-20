@@ -1,46 +1,27 @@
 # strategy.py
 
-def generate_strategy(objective, scale, audience, investment, metrics, ai_categories):
+def generate_strategy(objective, investment, metrics, ai_categories):
     """
-    Generates a complete strategic profile for an event.
-
-    This function provides a comparable event profile, prioritizes metrics based
-    on the campaign objective, and generates strategic advice based on the
-    relationship between investment and metric choice.
+    Generates strategic advice based on event profile and selected metrics.
+    This function is isolated and its output is for user guidance only.
 
     Args:
         objective (str): The primary campaign goal.
-        scale (str): The campaign's scale.
-        audience (str): The target audience.
         investment (str): The campaign's investment level.
         metrics (list): A list of the user's selected metrics.
         ai_categories (dict): A dictionary mapping metrics to their AI-generated category.
 
     Returns:
-        dict: A dictionary containing the ideal profile, prioritized metrics, and guidance notes.
+        dict: A dictionary containing prioritized metrics and strategic considerations.
     """
     
-    # --- Part 1: Define Comparable Event Profile (As before) ---
-    profile_description = (
-        f"Based on your inputs, you should look for past events that were also "
-        f"'{scale}' scale, focused on '{audience}', "
-        f"with a primary objective of '{objective}'."
-    )
-    
-    hierarchy_notes = [
-        {"title": "Priority #1: Match by Objective", "text": "..."},
-        {"title": "Priority #2: Match by Scale", "text": "..."},
-        {"title": "Priority #3: Match by Audience", "text": "..."}
-    ] # Text truncated for brevity, logic remains the same.
-
-    # --- Part 2: Prioritize Metrics based on Objective ---
+    # --- Part 1: Prioritize Metrics based on Objective ---
     prioritized_metrics = []
     priority_map = {
         "Brand Awareness / Reach":      {"Reach": "High", "Depth": "Medium", "Action": "Low"},
         "Audience Engagement / Depth":  {"Depth": "High", "Reach": "Medium", "Action": "Low"},
         "Conversion / Action":          {"Action": "High", "Depth": "Medium", "Reach": "Low"}
     }
-    
     current_priority_scheme = priority_map.get(objective, {})
 
     for metric in metrics:
@@ -52,7 +33,7 @@ def generate_strategy(objective, scale, audience, investment, metrics, ai_catego
             "Priority": priority
         })
 
-    # --- Part 3: Generate Strategic Considerations based on Investment ---
+    # --- Part 2: Generate Strategic Considerations based on Investment ---
     considerations = []
     high_cost_metrics = ["Press UMV (unique monthly views)", "Social Impressions"]
     
@@ -77,8 +58,6 @@ def generate_strategy(objective, scale, audience, investment, metrics, ai_catego
             })
 
     return {
-        "ideal_profile_description": profile_description,
-        "hierarchy_notes": hierarchy_notes,
         "prioritized_metrics": prioritized_metrics,
         "strategic_considerations": considerations
     }
