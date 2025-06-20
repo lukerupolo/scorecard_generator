@@ -1,5 +1,3 @@
-# app.py (Original Version)
-
 import streamlit as st
 from io import BytesIO
 from datetime import datetime
@@ -8,31 +6,40 @@ import pandas as pd
 # --- Local Imports from our other files ---
 from style import STYLE_PRESETS 
 from ui import render_sidebar
-from data_processing import process_scorecard_data, calculate_all_benchmarks
+# Updated import to include get_ai_metric_categories
+from data_processing import process_scorecard_data, calculate_all_benchmarks, get_ai_metric_categories
 from powerpoint import create_presentation
 from excel import create_excel_workbook
+# New import for the strategy logic
+from strategy import generate_strategy
 
 # ================================================================================
 # 1) App State Initialization
 # ================================================================================
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
-APP_VERSION = "4.0.0" 
+# Version updated to reflect the new feature
+APP_VERSION = "4.1.0" 
 
 if 'app_version' not in st.session_state or st.session_state.app_version != APP_VERSION:
     api_key = st.session_state.get('openai_api_key')
     
+    # Clear all keys from the session state
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     
+    # Initialize all keys to their default values
     st.session_state.app_version = APP_VERSION
     st.session_state.api_key_entered = True if api_key else False
     st.session_state.openai_api_key = api_key
     st.session_state.metrics_confirmed = False
+    st.session_state.strategy_complete = False # New state for the strategy step
     st.session_state.benchmark_flow_complete = False
     st.session_state.scorecard_ready = False
     st.session_state.show_ppt_creator = False
     st.session_state.metrics = []
+    st.session_state.ai_categories = {} # New state for AI categories
+    st.session_state.strategy_profile = {} # New state for the generated profile
     st.session_state.benchmark_choice = "No, I will enter benchmarks manually later."
     st.session_state.benchmark_df = pd.DataFrame()
     st.session_state.sheets_dict = None
@@ -112,15 +119,68 @@ elif not st.session_state.metrics_confirmed:
             st.error("Please select at least one metric.")
         else:
             st.session_state.metrics = st.session_state.current_metrics
+            # AI categorization now happens here to be ready for the strategy step
+            with st.spinner("Using AI to categorize your metrics..."):
+                st.session_state.ai_categories = get_ai_metric_categories(
+                    st.session_state.metrics,
+                    st.session_state.openai_api_key
+                )
             st.session_state.metrics_confirmed = True
             del st.session_state.current_metrics
             st.rerun()
 
 # ================================================================================
-# Step 2: Optional Benchmark Calculation
+# NEW Step 2: Benchmark Strategy
+# ================================================================================
+elif not st.session_state.strategy_complete:
+    st.header("Step 2: Benchmark Strategy (Optional)")
+    st.info("Profile your event to receive strategic guidance. This is for planning purposes and will not affect your benchmark calculations.")
+
+    with st.form("strategy_form"):
+        objective = st.selectbox(
+            "Primary Objective:",
+            options=["Brand Awareness / Reach", "Audience Engagement / Depth", "Conversion / Action"]
+        )
+        investment = st.selectbox(
+            "Campaign Investment Level:",
+            options=["Low (<$50k)", "Medium ($50k - $250k)", "High ($250k - $1M)", "Major (>$1M)"]
+        )
+        
+        submitted = st.form_submit_button("Generate Strategy Profile")
+        if submitted:
+            strategy_profile = generate_strategy(
+                objective,
+                investment,
+                st.session_state.metrics,
+                st.session_state.ai_categories
+            )
+            st.session_state.strategy_profile = strategy_profile
+
+    # Display the generated profile if it exists in the session state
+    if st.session_state.get("strategy_profile"):
+        profile = st.session_state.strategy_profile
+        st.markdown("---")
+        st.subheader("Your Strategic Recommendation")
+        if profile.get("prioritized_metrics"):
+            st.markdown("#### Metric Prioritization")
+            st.dataframe(pd.DataFrame(profile["prioritized_metrics"]), use_container_width=True)
+        if profile.get("strategic_considerations"):
+            st.markdown("#### Strategic Considerations")
+            for item in profile["strategic_considerations"]:
+                if item['type'] == 'Warning': st.warning(item['text'])
+                else: st.info(item['text'])
+    
+    st.markdown("---")
+    if st.button("Proceed to Benchmark Calculation →", type="primary"):
+        st.session_state.strategy_complete = True
+        st.rerun()
+
+
+# ================================================================================
+# Step 3: Optional Benchmark Calculation (was Step 2)
 # ================================================================================
 elif not st.session_state.benchmark_flow_complete:
-    st.header("Step 2: Benchmark Calculation (Optional)")
+    st.header("Step 3: Benchmark Calculation (Optional)")
     
     benchmark_choice = st.radio(
         "Would you like to calculate proposed benchmark values using historical data?",
@@ -156,7 +216,7 @@ elif not st.session_state.benchmark_flow_complete:
             st.rerun()
 
 # ================================================================================
-# Step 3 & 4 - Main App Logic
+# Step 4 & 5 - Main App Logic (was Step 3 & 4)
 # ================================================================================
 else:
     app_config = {
@@ -166,8 +226,8 @@ else:
         'avg_actuals': st.session_state.get('avg_actuals')
     }
     
-    # --- Step 3: Build & Save Scorecard Moments ---
-    st.header("Step 3: Build & Save Scorecard Moments")
+    # --- Step 4: Build & Save Scorecard Moments ---
+    st.header("Step 4: Build & Save Scorecard Moments")
     
     if st.session_state.sheets_dict is None:
         st.session_state.sheets_dict = process_scorecard_data(app_config)
@@ -207,10 +267,10 @@ else:
                 st.dataframe(df, use_container_width=True)
         st.session_state.show_ppt_creator = True
 
-    # --- Step 4: Create Presentation ---
+    # --- Step 5: Create Presentation ---
     if st.session_state.get('show_ppt_creator'):
         st.markdown("---")
-        st.header("Step 4: Create Presentation")
+        st.header("Step 5: Create Presentation")
         
         if st.session_state.get("presentation_buffer"):
             st.download_button(label="✅ Download Your Presentation!", data=st.session_state.presentation_buffer, file_name="game_scorecard_presentation.pptx", use_container_width=True)
@@ -252,4 +312,3 @@ else:
                         )
                         st.session_state["presentation_buffer"] = ppt_buffer
                         st.rerun()
-
