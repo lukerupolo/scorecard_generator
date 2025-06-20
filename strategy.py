@@ -1,14 +1,19 @@
+# strategy.py
+
 def define_comparable_profile(objective, scale, audience):
     """
     Generates a profile for comparable events based on strategic inputs.
 
+    This function provides a clear, hierarchical guide for selecting appropriate
+    past events to use for benchmarking, based on core marketing principles.
+
     Args:
-        objective (str): The primary goal of the campaign.
-        scale (str): The scale and investment level of the campaign.
-        audience (str): The target audience of the campaign.
+        objective (str): The primary goal of the campaign (e.g., 'Brand Awareness / Reach').
+        scale (str): The scale and investment level of the campaign (e.g., 'Major', 'Standard').
+        audience (str): The target audience of the campaign (e.g., 'New Customer Acquisition').
 
     Returns:
-        dict: A dictionary containing the ideal profile description and guidance notes.
+        dict: A dictionary containing the ideal profile description and prioritized guidance notes.
     """
     profile_description = (
         f"Based on your inputs, you should look for past events that were also "
