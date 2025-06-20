@@ -1,12 +1,43 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import requests
+import json
 from typing import Dict, List
 
+# ================================================================================
+# AI Metric Categorization using OpenAI API
+# ================================================================================
+def get_ai_metric_categories(metrics: list, api_key: str) -> dict:
+    """Uses the OpenAI API to categorize a list of metrics."""
+    if not api_key: return {}
+    if not metrics: return {}
+    st.info("Asking AI to categorize metrics...")
+    prompt = f"""
+    You are an expert marketing analyst. Categorize the following metrics into 'Reach', 'Depth', or 'Action', based on these definitions:
+    - Reach: Did we hit sufficient scale?
+    - Depth: Did we meaningfully engage?
+    - Action: Did they take action?
+    Metrics: {json.dumps(metrics)}
+    Respond *only* with a single JSON object where keys are the metrics and values are their category.
+    """
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload = {"model": "gpt-4-turbo", "messages": [{"role": "user", "content": prompt}], "response_format": {"type": "json_object"}, "temperature": 0.1}
+    try:
+        api_url = "https://api.openai.com/v1/chat/completions"
+        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        return json.loads(response.json()['choices'][0]['message']['content'])
+    except Exception as e:
+        st.error(f"AI categorization failed: {e}")
+        return {}
+
+# ================================================================================
+# Scorecard Generation
+# ================================================================================
 def process_scorecard_data(config: dict) -> dict:
     """
-    Generates the final scorecard structure, pre-filling 'Actuals' and 'Benchmark' 
-    if they were calculated in the previous step.
+    Generates the initial scorecard structure, now with AI-driven categories.
     """
     sheets_dict = {}
     all_metrics = list(set(config.get('metrics', [])))
@@ -14,71 +45,79 @@ def process_scorecard_data(config: dict) -> dict:
         st.warning("No metrics selected.")
         return {}
     
-    proposed_benchmarks = config.get('proposed_benchmarks') or {}
-    avg_actuals = config.get('avg_actuals') or {}
+    # --- FIXED: Re-enabled the AI categorization call ---
+    ai_categories = get_ai_metric_categories(all_metrics, config.get('openai_api_key'))
+    if not ai_categories: st.warning("Could not get AI categories. Using 'Uncategorized'.")
+    
+    proposed_benchmarks = config.get('proposed_benchmarks', {})
+    avg_actuals = config.get('avg_actuals', {})
+
+    # Sort metrics based on the desired category order for a clean table layout
+    category_order = ["Reach", "Depth", "Action", "Uncategorized"]
+    sorted_metrics = sorted(all_metrics, key=lambda x: category_order.index(ai_categories.get(x, "Uncategorized")))
 
     rows_for_event = []
-    for metric_name in all_metrics:
+    for metric_name in sorted_metrics:
+        category = ai_categories.get(metric_name, "Uncategorized")
         benchmark_val = proposed_benchmarks.get(metric_name)
         actual_val = avg_actuals.get(metric_name)
-        
-        row = {"Category": "N/A", "Metric": metric_name, "Actuals": actual_val, "Benchmark": benchmark_val, "% Difference": None}
+        row = {"Category": category, "Metric": metric_name, "Actuals": actual_val, "Benchmark": benchmark_val, "% Difference": None}
         rows_for_event.append(row)
     
     df_event = pd.DataFrame(rows_for_event)
+    if not df_event.empty:
+        # This logic correctly blanks out repeated category names
+        df_event['category_group'] = (df_event['Category'] != df_event['Category'].shift()).cumsum()
+        df_event.loc[df_event.duplicated(subset=['category_group']), 'Category'] = ''
+        df_event = df_event.drop(columns=['category_group'])
+        
     sheets_dict["Final Scorecard"] = df_event
     return sheets_dict
 
-def generate_benchmark_summary(
-    historical_data: Dict[str, pd.DataFrame],
-    metrics: List[str]
-) -> (pd.DataFrame, Dict, Dict):
+# ================================================================================
+# Benchmark Calculation (Now using your specified logic)
+# ================================================================================
+def calculate_all_benchmarks(historical_inputs: Dict[str, Dict]) -> (pd.DataFrame, Dict, Dict):
     """
-    Takes a dictionary of historical event DataFrames and calculates the final
-    proposed benchmark summary table based on the specified logic.
+    Takes historical data and the user-provided 3-month average to calculate benchmarks.
     """
-    all_events_df = pd.concat(historical_data.values(), ignore_index=True)
-    
-    all_events_df['Baseline (7-day)'] = pd.to_numeric(all_events_df['Baseline (7-day)'], errors='coerce')
-    all_events_df['Actual (7-day)'] = pd.to_numeric(all_events_df['Actual (7-day)'], errors='coerce')
-    all_events_df.dropna(subset=['Baseline (7-day)', 'Actual (7-day)'], inplace=True)
+    summary_rows, proposed_benchmarks_dict, avg_actuals_dict = [], {}, {}
 
-    if all_events_df.empty:
-        st.warning("No valid historical data was entered to calculate benchmarks.")
+    for metric, inputs in historical_inputs.items():
+        df = inputs['historical_df']
+        three_month_avg_baseline = inputs['three_month_avg']
+
+        df['Baseline (7-day)'] = pd.to_numeric(df['Baseline (7-day)'], errors='coerce')
+        df['Actual (7-day)'] = pd.to_numeric(df['Actual (7-day)'], errors='coerce')
+        df.dropna(subset=['Baseline (7-day)', 'Actual (7-day)'], inplace=True)
+        
+        if df.empty: continue
+
+        baselines, actuals = df['Baseline (7-day)'], df['Actual (7-day)']
+        
+        # Calculate historical average uplift
+        uplifts = np.where(baselines != 0, (actuals - baselines) / baselines * 100, 0.0)
+        avg_uplift_pct = uplifts.mean()
+        
+        # Calculate proposed benchmark using the user's baseline input
+        proposed_benchmark = three_month_avg_baseline * (1 + (avg_uplift_pct / 100))
+        
+        avg_actual_historical = actuals.mean()
+        
+        summary_rows.append({
+            "Metric": metric,
+            "Avg. Actuals (Historical)": round(avg_actual_historical, 2),
+            "Baseline Method (User Input)": round(three_month_avg_baseline, 2),
+            "Baseline Uplift Expect. (%)": f"{avg_uplift_pct:.2f}%",
+            "Proposed Benchmark": round(proposed_benchmark, 2),
+        })
+        
+        proposed_benchmarks_dict[metric] = round(proposed_benchmark, 2)
+        # We use the historical average of actuals for the final scorecard
+        avg_actuals_dict[metric] = round(avg_actual_historical, 2)
+    
+    if not summary_rows:
+        st.warning("No valid data entered to calculate benchmarks.")
         return pd.DataFrame(), {}, {}
-
-    # --- Perform Calculations Exactly as Specified ---
-    
-    # Calculate Uplift % for each individual historical data row
-    all_events_df['Uplift %'] = ((all_events_df['Actual (7-day)'] - all_events_df['Baseline (7-day)']) / all_events_df['Baseline (7-day)']) * 100
-
-    grouped = all_events_df.groupby('Metric')
-    
-    avg_actuals = grouped['Actual (7-day)'].mean()
-    avg_baselines = grouped['Baseline (7-day)'].mean()
-    avg_uplift_pct = all_events_df.groupby('Metric')['Uplift %'].mean()
-    
-    summary_df = pd.DataFrame({
-        "Avg. Actuals": avg_actuals,
-        "Baseline Method": avg_baselines,
-        "Baseline Uplift Expect. (%)": avg_uplift_pct
-    }).reset_index()
-
-    # Calculate the Proposed Benchmark using the calculated averages
-    summary_df['Proposed Benchmark'] = summary_df.apply(
-        lambda row: np.median([row['Avg. Actuals'], row['Baseline Method']]),
-        axis=1
-    )
-    
-    final_cols = ["Metric", "Avg. Actuals", "Baseline Method", "Baseline Uplift Expect. (%)", "Proposed Benchmark"]
-    summary_df = summary_df[final_cols]
-    
-    for col in ["Avg. Actuals", "Baseline Method", "Proposed Benchmark"]:
-        summary_df[col] = summary_df[col].round(2)
-    summary_df['Baseline Uplift Expect. (%)'] = summary_df['Baseline Uplift Expect. (%)'].apply(lambda x: f"{x:.2f}%")
-
-    # Create dictionaries to pass to the next step
-    proposed_benchmarks_dict = summary_df.set_index('Metric')['Proposed Benchmark'].to_dict()
-    avg_actuals_dict = summary_df.set_index('Metric')['Avg. Actuals'].to_dict()
-
-    return summary_df, proposed_benchmarks_dict, avg_actuals_dict
+        
+    return pd.DataFrame(summary_rows), proposed_benchmarks_dict, avg_actuals_dict
