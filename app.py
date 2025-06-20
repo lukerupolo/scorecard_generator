@@ -6,23 +6,27 @@ import pandas as pd
 # --- Local Imports from our other files ---
 from style import STYLE_PRESETS 
 from ui import render_sidebar
-from data_processing import process_scorecard_data, calculate_all_benchmarks
+from data_processing import process_scorecard_data, generate_benchmark_summary
 from powerpoint import create_presentation
 from excel import create_excel_workbook
 
 # ================================================================================
-# 1) App State Initialization
+# 1) App State Initialization (Robust Version)
 # ================================================================================
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
-# This versioning system helps reset the state when you update the code.
-APP_VERSION = "3.0.0" 
+# This versioning system forces the app state to reset when you update the code.
+APP_VERSION = "3.1.0" 
 
 if 'app_version' not in st.session_state or st.session_state.app_version != APP_VERSION:
+    # Preserve the API key if it exists across resets
     api_key = st.session_state.get('openai_api_key')
+    
+    # Clear all keys from the session state
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     
+    # Now, initialize all keys to their default values
     st.session_state.app_version = APP_VERSION
     st.session_state.api_key_entered = True if api_key else False
     st.session_state.openai_api_key = api_key
@@ -35,8 +39,9 @@ if 'app_version' not in st.session_state or st.session_state.app_version != APP_
     st.session_state.benchmark_df = pd.DataFrame()
     st.session_state.sheets_dict = None
     st.session_state.presentation_buffer = None
+    st.session_state.events_config = []
     st.session_state.proposed_benchmarks = {}
-    st.session_state.saved_moments = {}
+    st.session_state.saved_moments = {} # Ensures this key always exists
 
 st.title("Event Marketing Scorecard & Presentation Generator")
 render_sidebar()
@@ -85,18 +90,24 @@ elif not st.session_state.benchmark_flow_complete:
 
     if benchmark_choice == "Yes, calculate benchmarks from past events.":
         with st.form("benchmark_data_form"):
-            st.info("For each metric, provide its 3-month average from your external tool, then enter the Baseline and Actual values from past events to calculate the expected uplift.")
-            historical_inputs = {}
-            for metric in st.session_state.metrics:
-                st.markdown(f"--- \n #### Data for: **{metric}**")
-                three_month_avg = st.number_input(f"3-Month Average (Baseline Method) for '{metric}'", min_value=0.0, format="%.2f", key=f"3m_avg_{metric}")
-                df_template = pd.DataFrame([{"Event Name": "Past Event 1", "Baseline (7-day)": None, "Actual (7-day)": None}])
-                edited_df = st.data_editor(df_template, key=f"hist_editor_{metric}", num_rows="dynamic", use_container_width=True)
-                historical_inputs[metric] = {"historical_df": edited_df, "three_month_avg": three_month_avg}
+            st.info("For each past event, enter the Baseline and Actual values for all selected metrics.")
+            n_benchmark_events = st.number_input("Number of past events to use for benchmark", min_value=1, max_value=10, value=1)
+            
+            historical_data_input = {}
+            for i in range(n_benchmark_events):
+                st.markdown(f"--- \n ##### Data for Past Event {i+1}")
+                df_template = pd.DataFrame({
+                    "Metric": st.session_state.metrics,
+                    "Baseline (7-day)": [None] * len(st.session_state.metrics),
+                    "Actual (7-day)": [None] * len(st.session_state.metrics)
+                }).set_index("Metric")
+                
+                edited_df = st.data_editor(df_template, key=f"hist_editor_{i}", use_container_width=True)
+                historical_data_input[f"Past Event {i+1}"] = edited_df.reset_index()
 
-            if st.form_submit_button("Calculate All Proposed Benchmarks & Proceed →", type="primary"):
+            if st.form_submit_button("Calculate Proposed Benchmark & Proceed →", type="primary"):
                 with st.spinner("Analyzing historical data..."):
-                    summary_df, proposed_benchmarks, avg_actuals = calculate_all_benchmarks(historical_inputs)
+                    summary_df, proposed_benchmarks, avg_actuals = generate_benchmark_summary(historical_data_input, st.session_state.metrics)
                     st.session_state.benchmark_df = summary_df
                     st.session_state.proposed_benchmarks = proposed_benchmarks
                     st.session_state.avg_actuals = avg_actuals
@@ -129,7 +140,6 @@ else:
 
     if current_scorecard_df is not None:
         edited_df = st.data_editor(current_scorecard_df, key="moment_editor", use_container_width=True, num_rows="dynamic")
-        
         edited_df['Actuals'] = pd.to_numeric(edited_df['Actuals'], errors='coerce')
         edited_df['Benchmark'] = pd.to_numeric(edited_df['Benchmark'], errors='coerce')
         edited_df['% Difference'] = ((edited_df['Actuals'] - edited_df['Benchmark']) / edited_df['Benchmark']).apply(lambda x: f"{x:.1%}" if pd.notna(x) else None)
