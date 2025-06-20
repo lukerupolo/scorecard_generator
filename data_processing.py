@@ -21,9 +21,9 @@ def get_ai_metric_categories(metrics: list, api_key: str) -> dict:
     You are an expert marketing analyst. Your task is to categorize a list of metrics into one of three categories: 'Reach', 'Depth', or 'Action'.
 
     Here are the definitions:
-    - **Reach**: Did we hit sufficient scale? (e.g., 'Video Views', 'Impressions', 'Social Conversation Volume')
-    - **Depth**: Did we meaningfully engage? (e.g., 'Social Sentiment', 'Average % Viewed', 'Email Open Rate')
-    - **Action**: Did they take action? (e.g., 'Labs program sign-ups', 'Discord channel sign-ups', 'Installs')
+    - **Reach**: Did we hit sufficient scale?
+    - **Depth**: Did we meaningfully engage?
+    - **Action**: Did they take action?
 
     Here is the list of metrics to categorize:
     {json.dumps(metrics)}
@@ -56,13 +56,14 @@ def process_scorecard_data(config: dict) -> dict:
         st.warning("No metrics selected.")
         return {}
     
-    # --- FIXED: Re-enabled the AI categorization call ---
     ai_categories = get_ai_metric_categories(all_metrics, config.get('openai_api_key'))
     if not ai_categories: 
         st.warning("Could not get AI categories. Using 'Uncategorized'.")
     
-    proposed_benchmarks = config.get('proposed_benchmarks', {})
-    avg_actuals = config.get('avg_actuals', {})
+    # --- FIXED: Safely handle cases where benchmark data was not generated ---
+    # Default to an empty dictionary if the keys are missing or None.
+    proposed_benchmarks = config.get('proposed_benchmarks') or {}
+    avg_actuals = config.get('avg_actuals') or {}
 
     # Sort metrics based on the desired category order for a clean table layout
     category_order = ["Reach", "Depth", "Action", "Uncategorized"]
