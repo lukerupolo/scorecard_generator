@@ -61,36 +61,69 @@ if not st.session_state.api_key_entered:
                 st.error("Please enter a valid OpenAI API key.")
 
 # ================================================================================
-# Step 1: Metric Selection
+# Step 1: Metric Selection (New Interactive Version)
 # ================================================================================
 elif not st.session_state.metrics_confirmed:
     st.header("Step 1: Metric Selection")
-    with st.form("metrics_form"):
-        st.info("Select the metrics you want to measure for this scorecard.")
-        predefined_metrics = [
-            "Video views (Franchise)", "Social Impressions", "Press UMV (unique monthly views)",
-            "Social Conversation Volume", "Views trailer", "UGC Views", 
-            "Social Impressions-Posts with trailer (FB, IG, X)", "Social Impressions-All posts",
-            "Nb. press articles", "Social Sentiment (Franchise)", "Trailer avg % viewed (Youtube)",
-            "Email Open Rate (OR)", "Email Click Through Rate (CTR)", "Labs program sign-ups",
-            "Discord channel sign-ups", "% Trailer views from Discord (Youtube)",
-            "Labs sign up click-through Web", "Sessions", "DAU", "Hours Watched (Streams)"
-        ]
-        selected_metrics = st.multiselect("Select metrics:", options=predefined_metrics, default=["Video views (Franchise)", "Social Impressions"])
-        
-        # --- PASTE THE SNIPPET HERE ---
-        if custom_metric := st.text_input("✍️ Add Custom Metric (and press Enter)"):
-            if custom_metric and custom_metric not in selected_metrics:
-                selected_metrics.append(custom_metric)
-        # --- END OF SNIPPET ---
-        
-        if st.form_submit_button("Confirm Metrics & Proceed →", type="primary"):
-            if not selected_metrics:
-                st.error("Please select at least one metric.")
-            else:
-                st.session_state.metrics = selected_metrics
-                st.session_state.metrics_confirmed = True
-                st.rerun()
+
+    # Initialize a temporary list in session state to hold the metrics for this step
+    if 'current_metrics' not in st.session_state:
+        st.session_state.current_metrics = ["Video views (Franchise)", "Social Impressions"]
+
+    st.info("Select metrics from the dropdown, or add your own below. Press Enter to add a custom metric.")
+    
+    predefined_metrics = [
+        "Video views (Franchise)", "Social Impressions", "Press UMV (unique monthly views)",
+        "Social Conversation Volume", "Views trailer", "UGC Views", 
+        "Social Impressions-Posts with trailer (FB, IG, X)", "Social Impressions-All posts",
+        "Nb. press articles", "Social Sentiment (Franchise)", "Trailer avg % viewed (Youtube)",
+        "Email Open Rate (OR)", "Email Click Through Rate (CTR)", "Labs program sign-ups",
+        "Discord channel sign-ups", "% Trailer views from Discord (Youtube)",
+        "Labs sign up click-through Web", "Sessions", "DAU", "Hours Watched (Streams)"
+    ]
+
+    # Combine predefined metrics with any custom ones already added
+    all_possible_metrics = sorted(list(set(predefined_metrics + st.session_state.current_metrics)))
+
+    # Use a callback to update the list when the multiselect changes
+    def update_selections():
+        st.session_state.current_metrics = st.session_state.multiselect_key
+
+    st.multiselect(
+        "Select metrics:", 
+        options=all_possible_metrics, 
+        default=st.session_state.current_metrics,
+        key="multiselect_key",
+        on_change=update_selections
+    )
+    
+    # Use a callback to add a new custom metric when the user presses Enter
+    def add_custom_metric():
+        custom_metric = st.session_state.custom_metric_input.strip()
+        if custom_metric and custom_metric not in st.session_state.current_metrics:
+            st.session_state.current_metrics.append(custom_metric)
+        # Clear the input box for the next entry
+        st.session_state.custom_metric_input = ""
+
+    st.text_input(
+        "✍️ Add Custom Metric (and press Enter)", 
+        key="custom_metric_input", 
+        on_change=add_custom_metric
+    )
+
+    st.markdown("---")
+
+    # The final confirmation button is no longer inside a form
+    if st.button("Confirm Metrics & Proceed →", type="primary"):
+        if not st.session_state.current_metrics:
+            st.error("Please select at least one metric.")
+        else:
+            # Finalize the metric list and move to the next step
+            st.session_state.metrics = st.session_state.current_metrics
+            st.session_state.metrics_confirmed = True
+            # Clean up the temporary state variable
+            del st.session_state.current_metrics
+            st.rerun()
 
 # ================================================================================
 # Step 2: Optional Benchmark Calculation
