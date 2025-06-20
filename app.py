@@ -1,9 +1,21 @@
 # app.py
 import streamlit as st
 import pandas as pd
+import sys
+import os
 
-# The 'sys' and 'os' path fixes are removed as they are no longer needed
-# with the correct package structure (__init__.py files).
+# --- Robust Path Fix for Streamlit Cloud ---
+# Get the absolute path of the directory where app.py is located.
+# On Streamlit Cloud, this is usually /mount/src/scorecard_generator/
+PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
+
+# Get the parent directory of the project root.
+# This should be /mount/src/, which allows Python to find the 'scorecard_generator' package.
+SRC_ROOT = os.path.dirname(PROJECT_ROOT)
+
+# Add the source root to the Python path.
+if SRC_ROOT not in sys.path:
+    sys.path.insert(0, SRC_ROOT)
 
 # --- Explicit Imports from the project root directory ---
 from scorecard_generator.ui import render_sidebar
@@ -18,7 +30,7 @@ from scorecard_generator.steps import (
 )
 
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
-APP_VERSION = "6.0.4" # Incremented version
+APP_VERSION = "6.0.5" # Incremented version
 
 def initialize_state():
     """Initializes all session state variables."""
