@@ -21,11 +21,15 @@ for key in ['api_key_entered', 'metrics_confirmed', 'benchmark_flow_complete', '
 for key in ['openai_api_key', 'metrics', 'benchmark_choice', 'benchmark_df', 'sheets_dict', 'presentation_buffer', 'events_config', 'proposed_benchmarks', 'avg_actuals']:
      if key not in st.session_state: st.session_state[key] = None
 
+# Initialize saved_moments as a dictionary if it's None
+if 'saved_moments' not in st.session_state:
+    st.session_state.saved_moments = {}
+
 st.title("Event Marketing Scorecard & Presentation Generator")
-app_config = render_sidebar()
+render_sidebar()
 
 # ================================================================================
-# Step 0: API Key Entry
+# Step 0 & 1: API Key and Metric Selection
 # ================================================================================
 if not st.session_state.api_key_entered:
     st.header("Step 0: Enter Your OpenAI API Key")
@@ -39,9 +43,6 @@ if not st.session_state.api_key_entered:
             else:
                 st.error("Please enter a valid OpenAI API key.")
 
-# ================================================================================
-# Step 1: Metric Selection
-# ================================================================================
 elif not st.session_state.metrics_confirmed:
     st.header("Step 1: Metric Selection")
     with st.form("metrics_form"):
@@ -61,7 +62,7 @@ elif not st.session_state.benchmark_flow_complete:
     st.header("Step 2: Benchmark Calculation (Optional)")
     
     benchmark_choice = st.radio(
-        "Would you like to calculate proposed benchmark values by uploading historical data?",
+        "Would you like to calculate proposed benchmark values using historical data?",
         ("No, I will enter benchmarks manually later.", "Yes, calculate benchmarks from past events."),
         key="benchmark_choice_radio"
     )
@@ -69,19 +70,21 @@ elif not st.session_state.benchmark_flow_complete:
     if benchmark_choice == "Yes, calculate benchmarks from past events.":
         with st.form("benchmark_data_form"):
             st.info("For each past event, enter the Baseline and Actual values for all selected metrics.")
-            n_benchmark_events = st.number_input("Number of past events to use for benchmark", min_value=1, max_value=10, value=1)
+            n_benchmark_events = st.number_input("Number of past events to use for benchmark", min_value=1, max_value=10, value=2)
             
             historical_data_input = {}
             for i in range(n_benchmark_events):
-                event_name = st.text_input(f"Name for Past Event {i+1}", value=f"Past Event {i+1}", key=f"past_event_name_{i}")
+                st.markdown(f"--- \n ##### Data for Past Event {i+1}")
+                # Create a DataFrame with metrics as rows for each past event
                 df_template = pd.DataFrame({
                     "Metric": st.session_state.metrics,
                     "Baseline (7-day)": [None] * len(st.session_state.metrics),
                     "Actual (7-day)": [None] * len(st.session_state.metrics)
                 }).set_index("Metric")
                 
+                # Use a unique key for each data editor to ensure they are independent
                 edited_df = st.data_editor(df_template, key=f"hist_editor_{i}", use_container_width=True)
-                historical_data_input[event_name] = edited_df.reset_index()
+                historical_data_input[f"Past Event {i+1}"] = edited_df.reset_index()
 
             if st.form_submit_button("Calculate Proposed Benchmark & Proceed →", type="primary"):
                 with st.spinner("Analyzing historical data..."):
@@ -100,10 +103,15 @@ elif not st.session_state.benchmark_flow_complete:
 # Step 3, 4, 5 - Main App Logic
 # ================================================================================
 else:
-    app_config['openai_api_key'] = st.session_state.openai_api_key
-    app_config['metrics'] = st.session_state.metrics
-    app_config['proposed_benchmarks'] = st.session_state.get('proposed_benchmarks')
-    app_config['avg_actuals'] = st.session_state.get('avg_actuals')
+    app_config = {
+        'openai_api_key': st.session_state.openai_api_key, 
+        'metrics': st.session_state.metrics,
+        'proposed_benchmarks': st.session_state.get('proposed_benchmarks'),
+        'avg_actuals': st.session_state.get('avg_actuals')
+    }
+    
+    # ... The rest of the app logic remains unchanged ...
+
     
     if not st.session_state.scorecard_ready:
         with st.spinner("Building final scorecard..."):
