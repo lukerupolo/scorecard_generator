@@ -14,8 +14,10 @@ def process_scorecard_data(config: dict) -> dict:
         st.warning("No metrics selected.")
         return {}
     
-    proposed_benchmarks = config.get('proposed_benchmarks', {})
-    avg_actuals = config.get('avg_actuals', {})
+    # --- FIXED: Safely handle cases where benchmark data was not generated ---
+    # Default to an empty dictionary if the keys are missing or None.
+    proposed_benchmarks = config.get('proposed_benchmarks') or {}
+    avg_actuals = config.get('avg_actuals') or {}
 
     rows_for_event = []
     for metric_name in all_metrics:
