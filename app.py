@@ -1,6 +1,12 @@
 # app.py
 import streamlit as st
 import pandas as pd
+import sys
+import os
+
+# This is the crucial part: Add the project's root directory to the Python path
+# This allows the app to find the 'steps' and 'strategy' modules
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 # Local Imports
 from ui import render_sidebar
@@ -15,7 +21,7 @@ from steps import (
 
 # --- App State Initialization ---
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
-APP_VERSION = "5.0.0"
+APP_VERSION = "5.0.1" # Incremented version
 
 def initialize_state():
     """Initializes all session state variables."""
