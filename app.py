@@ -66,7 +66,24 @@ if not st.session_state.api_key_entered:
 elif not st.session_state.metrics_confirmed:
     st.header("Step 1: Metric Selection")
     with st.form("metrics_form"):
-        selected_metrics = st.multiselect("Select metrics:", options=["Video views (Franchise)", "Social Impressions", "Press UMV (unique monthly views)"], default=["Video views (Franchise)"])
+        st.info("Select the metrics you want to measure for this scorecard.")
+        predefined_metrics = [
+            "Video views (Franchise)", "Social Impressions", "Press UMV (unique monthly views)",
+            "Social Conversation Volume", "Views trailer", "UGC Views", 
+            "Social Impressions-Posts with trailer (FB, IG, X)", "Social Impressions-All posts",
+            "Nb. press articles", "Social Sentiment (Franchise)", "Trailer avg % viewed (Youtube)",
+            "Email Open Rate (OR)", "Email Click Through Rate (CTR)", "Labs program sign-ups",
+            "Discord channel sign-ups", "% Trailer views from Discord (Youtube)",
+            "Labs sign up click-through Web", "Sessions", "DAU", "Hours Watched (Streams)"
+        ]
+        selected_metrics = st.multiselect("Select metrics:", options=predefined_metrics, default=["Video views (Franchise)", "Social Impressions"])
+        
+        # --- PASTE THE SNIPPET HERE ---
+        if custom_metric := st.text_input("✍️ Add Custom Metric (and press Enter)"):
+            if custom_metric and custom_metric not in selected_metrics:
+                selected_metrics.append(custom_metric)
+        # --- END OF SNIPPET ---
+        
         if st.form_submit_button("Confirm Metrics & Proceed →", type="primary"):
             if not selected_metrics:
                 st.error("Please select at least one metric.")
