@@ -12,93 +12,99 @@ from powerpoint import create_presentation
 from excel import create_excel_workbook
 
 # ================================================================================
-# NEW: Helper Function for Predictive Calculations
+# WORLD-CLASS PREDICTION ENGINE
 # ================================================================================
-def calculate_predictions(creators):
+def calculate_predictions_advanced(creators):
     """
-    Calculates the predicted reach and weighted engagement score for each post
-    and aggregates the totals for the campaign.
+    Calculates predicted reach and depth using a multi-factor model that accounts
+    for paid media, content freshness, and creator saturation.
 
     Args:
-        creators (list): A list of creator dictionaries.
+        creators (list): A list of creator dictionaries with post details.
 
     Returns:
-        tuple: A tuple containing the updated list of creators with predictions,
-               the total predicted reach, and the total weighted engagement score.
+        tuple: Updated creators list, total reach, total weighted engagement.
     """
     total_predicted_reach = 0
     total_weighted_engagement = 0
 
-    # Platform and format-specific weights for the formulas
-    # These would ideally be derived from historical data analysis
+    # --- Model Coefficients (World-Class Nuance) ---
     reach_weights = {
-        'Instagram': {'Reel': 1.2, 'Story': 0.4, 'Static Post': 0.9, 'Long-form Video': 0.7},
-        'TikTok': {'Reel': 1.5, 'Story': 0.5, 'Static Post': 0.8, 'Long-form Video': 0.9}, # Note: 'Reel' for consistency
-        'YouTube': {'Long-form Video': 0.8, 'Reel': 1.3} # Note: 'Reel' for Shorts
+        'Instagram': {'Reel': 1.25, 'Story': 0.35, 'Static Post': 0.85, 'Long-form Video': 0.7},
+        'TikTok': {'Reel': 1.6, 'Story': 0.4, 'Static Post': 0.7, 'Long-form Video': 0.9},
+        'YouTube': {'Long-form Video': 0.8, 'Reel': 1.4}
     }
     engagement_weights = {
-        'Instagram': {'likes': 1, 'comments': 3, 'shares': 5},
-        'TikTok': {'likes': 1, 'comments': 2, 'shares': 4},
-        'YouTube': {'likes': 1, 'comments': 4, 'shares': 2}
+        'Instagram': {'likes': 1, 'comments': 4, 'shares': 6, 'saves': 5},
+        'TikTok': {'likes': 1, 'comments': 3, 'shares': 5, 'saves': 4},
+        'YouTube': {'likes': 1, 'comments': 5, 'shares': 3}
     }
+    # Penalty/Bonus coefficients
+    PAID_BOOST_FACTOR = 0.02 # 2% reach boost per $1000 spent
+    FRESHNESS_BONUS = 0.15 # 15% bonus for new content
+    SATURATION_PENALTY = {'Medium': 0.10, 'High': 0.25} # 10-25% penalty
+    CTA_ENGAGEMENT_PENALTY = {'Soft CTA': 0, 'Hard CTA': 0.15} # Hard CTAs reduce organic ER by 15%
 
     for creator in creators:
-        follower_count = creator.get('follower_count', 1) # Use 1 to avoid division by zero
-        # Use the new avg_historical_reach field for a more accurate RER
-        avg_historical_reach = creator.get('avg_historical_reach', follower_count * 0.6) # Default to 60% if not provided
-
-        # Calculate the Historical Reach Efficiency Rate (RER)
-        historical_rer = avg_historical_reach / follower_count if follower_count > 0 else 0
+        creator_saturation = creator.get('saturation', 'Low')
 
         if 'posts' in creator and creator['posts']:
             for post in creator['posts']:
                 platform = creator.get('platform', 'Instagram')
                 post_format = post.get('format', 'Reel')
-                expected_er = post.get('expected_engagement_rate', 0) / 100.0
+                
+                # --- 1. Calculate Predicted Reach ---
+                baseline_reach = post.get('historical_reach_for_format', 0)
+                
+                paid_boost = (post.get('paid_amplification', 0) / 1000) * PAID_BOOST_FACTOR
+                freshness_boost = FRESHNESS_BONUS if post.get('is_new_content', True) else 0
+                saturation_penalty = SATURATION_PENALTY.get(creator_saturation, 0)
 
-                # --- UPDATED: Calculate Predicted Reach for the post using RER ---
-                platform_format_weight = reach_weights.get(platform, {}).get(post_format, 1.0)
-                predicted_reach = (follower_count * historical_rer) * platform_format_weight
+                adjustment_factor = 1 + paid_boost + freshness_boost - saturation_penalty
+                predicted_reach = baseline_reach * adjustment_factor
                 post['predicted_reach'] = predicted_reach
                 total_predicted_reach += predicted_reach
 
-                # --- Calculate Weighted Engagement Score for the post ---
-                estimated_interactions = predicted_reach * expected_er
+                # --- 2. Calculate Weighted Engagement Score (Depth) ---
+                base_er = post.get('historical_er_for_format', 0) / 100.0
+                cta_penalty = CTA_ENGAGEMENT_PENALTY.get(post.get('cta_type', 'Soft CTA'), 0)
+                adjusted_er = base_er * (1 - cta_penalty)
+
+                estimated_interactions = predicted_reach * adjusted_er
                 
-                # Assume a simple interaction split for this example
-                likes = estimated_interactions * 0.8
+                likes = estimated_interactions * 0.75
                 comments = estimated_interactions * 0.15
                 shares = estimated_interactions * 0.05
+                saves = estimated_interactions * 0.05
                 
                 platform_eng_weights = engagement_weights.get(platform, {})
                 weighted_score = (
                     likes * platform_eng_weights.get('likes', 1) +
                     comments * platform_eng_weights.get('comments', 1) +
-                    shares * platform_eng_weights.get('shares', 1)
+                    shares * platform_eng_weights.get('shares', 1) +
+                    saves * platform_eng_weights.get('saves', 1)
                 )
                 post['weighted_engagement_score'] = weighted_score
                 total_weighted_engagement += weighted_score
 
     return creators, total_predicted_reach, total_weighted_engagement
 
+
 # ================================================================================
 # 1) App State Initialization
 # ================================================================================
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
-
-APP_VERSION = "5.0.8" # Version for RER-based Predictive Formulas
+APP_VERSION = "7.0.0" # Final Integrated Version
 
 if 'app_version' not in st.session_state or st.session_state.app_version != APP_VERSION:
     api_key = st.session_state.get('openai_api_key')
-    # Clear all state to ensure a clean start
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-
+    for key in list(st.session_state.keys()): del st.session_state[key]
+    
     st.session_state.app_version = APP_VERSION
     st.session_state.api_key_entered = True if api_key else False
     st.session_state.openai_api_key = api_key
     st.session_state.metrics_confirmed = False
-    st.session_state.comparison_profile_complete = False
+    st.session_state.comparison_profile_complete = False # New state for the advanced Step 2
     st.session_state.benchmark_flow_complete = False
     st.session_state.scorecard_ready = False
     st.session_state.show_ppt_creator = False
@@ -110,14 +116,10 @@ if 'app_version' not in st.session_state or st.session_state.app_version != APP_
     st.session_state.avg_actuals = {}
     st.session_state.saved_moments = {}
     st.session_state.campaign_profile = {}
-    # State for managing dynamic creator and post lists
-    if 'creators' not in st.session_state:
-        st.session_state.creators = [
-            {'handle': 'creator_a', 'platform': 'Instagram', 'follower_count': 75000, 'avg_historical_reach': 45000, 'niche_category': 'Gaming', 'audience_authenticity_score': 0.95, 'posts': [
-                {'format': 'Reel', 'cost': 1500, 'expected_engagement_rate': 5.5},
-                {'format': 'Story', 'cost': 500, 'expected_engagement_rate': 2.0}
-            ]}
-        ]
+    st.session_state.creators = [{'handle': 'creator_a', 'platform': 'Instagram', 'follower_count': 150000, 'saturation': 'Medium', 'posts': [
+        {'format': 'Reel', 'cost': 2500, 'historical_reach_for_format': 80000, 'historical_er_for_format': 4.5, 'paid_amplification': 500, 'is_new_content': True, 'cta_type': 'Hard CTA'},
+        {'format': 'Story', 'cost': 500, 'historical_reach_for_format': 20000, 'historical_er_for_format': 1.8, 'paid_amplification': 0, 'is_new_content': True, 'cta_type': 'Soft CTA'}
+    ]}]
 
 
 st.title("Event Marketing Scorecard & Presentation Generator")
@@ -194,7 +196,7 @@ elif not st.session_state.metrics_confirmed:
             st.rerun()
 
 # ================================================================================
-# NEW Step 2: Define Campaign Profile for Comparison
+# NEW ADVANCED Step 2: Define Campaign Profile for Comparison
 # ================================================================================
 elif not st.session_state.comparison_profile_complete:
     st.header("Step 2: Define Campaign Profile for Comparison")
@@ -269,18 +271,46 @@ elif not st.session_state.comparison_profile_complete:
     if c1.button("Add Creator"): st.session_state.creators.append({}); st.rerun()
     if c2.button("Remove Last Creator"): 
         if st.session_state.creators: st.session_state.creators.pop(); st.rerun()
-# ================================================================================
-# Step 3: Optional Benchmark Calculation 
-# ================================================================================
-elif not st.session_state.benchmark_flow_complete:
-    st.header("Step 3: Auto-Generate Benchmarks")
-    st.info("This section is now placeholder. Benchmarks would be calculated from the campaigns found in Step 2.")
-    if st.button("Proceed to Scorecard Creation →", type="primary"):
-        st.session_state.benchmark_flow_complete = True
-        st.rerun()
 
 # ================================================================================
-# Step 4 & 5 - Main App Logic
+# Step 3: Original Benchmark Calculation
+# ================================================================================
+elif not st.session_state.benchmark_flow_complete:
+    st.header("Step 3: Benchmark Calculation (Optional)")
+    
+    st.info("The predictions from Step 2 are now available. You can also use this section to calculate benchmarks from historical data for non-influencer metrics.")
+
+    benchmark_choice = st.radio(
+        "Would you like to calculate proposed benchmark values using historical data?",
+        ("No, I will enter benchmarks manually later.", "Yes, calculate benchmarks from past events."),
+        key="benchmark_choice_radio"
+    )
+
+    if benchmark_choice == "Yes, calculate benchmarks from past events.":
+        with st.form("benchmark_data_form"):
+            historical_inputs = {}
+            for metric in st.session_state.metrics:
+                st.markdown(f"--- \n #### Data for: **{metric}**")
+                three_month_avg = st.number_input(f"3-Month Average (Baseline Method) for '{metric}'", min_value=0.0, format="%.2f", key=f"3m_avg_{metric}")
+                df_template = pd.DataFrame([{"Event Name": "Past Event 1", "Baseline (7-day)": None, "Actual (7-day)": None}])
+                edited_df = st.data_editor(df_template, key=f"hist_editor_{metric}", num_rows="dynamic", use_container_width=True)
+                historical_inputs[metric] = {"historical_df": edited_df, "three_month_avg": three_month_avg}
+
+            if st.form_submit_button("Calculate All Proposed Benchmarks & Proceed →", type="primary"):
+                with st.spinner("Analyzing historical data..."):
+                    summary_df, proposed_benchmarks, avg_actuals = calculate_all_benchmarks(historical_inputs)
+                    st.session_state.benchmark_df = summary_df
+                    st.session_state.proposed_benchmarks = proposed_benchmarks
+                    st.session_state.avg_actuals = avg_actuals
+                    st.session_state.benchmark_flow_complete = True
+                st.rerun()
+    else:
+        if st.button("Proceed to Scorecard Creation →", type="primary"):
+            st.session_state.benchmark_flow_complete = True
+            st.rerun()
+
+# ================================================================================
+# Step 4 & 5 - Main App Logic (Original)
 # ================================================================================
 else:
     app_config = {
@@ -289,11 +319,14 @@ else:
         'proposed_benchmarks': st.session_state.get('proposed_benchmarks'),
         'avg_actuals': st.session_state.get('avg_actuals')
     }
+    
     st.header("Step 4: Build & Save Scorecard Moments")
     if 'sheets_dict' not in st.session_state or st.session_state.sheets_dict is None:
         st.session_state.sheets_dict = process_scorecard_data(app_config)
+
     st.info("Fill in the 'Actuals' and 'Benchmark' columns, give the scorecard a name, and save it as a 'moment'.")
     current_scorecard_df = next(iter(st.session_state.sheets_dict.values()), None)
+
     if current_scorecard_df is not None:
         edited_df = st.data_editor(current_scorecard_df, key="moment_editor", use_container_width=True, num_rows="dynamic")
         if 'Benchmark' in edited_df.columns and edited_df['Benchmark'].notna().any():
@@ -310,6 +343,7 @@ else:
                 st.rerun()
             else:
                 st.error("Please enter a name for the moment before saving.")
+
     if st.session_state.saved_moments:
         st.markdown("---")
         st.subheader("Saved Scorecard Moments")
@@ -320,6 +354,7 @@ else:
             with st.expander(f"View Moment: {name}"):
                 st.dataframe(df, use_container_width=True)
         st.session_state.show_ppt_creator = True
+
     if st.session_state.get('show_ppt_creator'):
         st.markdown("---")
         st.header("Step 5: Create Presentation")
