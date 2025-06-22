@@ -43,18 +43,20 @@ def calculate_predictions(creators):
     }
 
     for creator in creators:
-        # Assume a baseline Historical Reach Efficiency Rate (RER)
-        # In a real model, this would be specific to the creator
-        historical_rer = 0.6  # Assumes a creator typically reaches 60% of their followers
+        follower_count = creator.get('follower_count', 1) # Use 1 to avoid division by zero
+        # Use the new avg_historical_reach field for a more accurate RER
+        avg_historical_reach = creator.get('avg_historical_reach', follower_count * 0.6) # Default to 60% if not provided
+
+        # Calculate the Historical Reach Efficiency Rate (RER)
+        historical_rer = avg_historical_reach / follower_count if follower_count > 0 else 0
 
         if 'posts' in creator and creator['posts']:
             for post in creator['posts']:
-                follower_count = creator.get('follower_count', 0)
                 platform = creator.get('platform', 'Instagram')
                 post_format = post.get('format', 'Reel')
                 expected_er = post.get('expected_engagement_rate', 0) / 100.0
 
-                # --- Calculate Predicted Reach for the post ---
+                # --- UPDATED: Calculate Predicted Reach for the post using RER ---
                 platform_format_weight = reach_weights.get(platform, {}).get(post_format, 1.0)
                 predicted_reach = (follower_count * historical_rer) * platform_format_weight
                 post['predicted_reach'] = predicted_reach
@@ -84,7 +86,7 @@ def calculate_predictions(creators):
 # ================================================================================
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
-APP_VERSION = "5.0.7" # Version for Predictive Formulas
+APP_VERSION = "5.0.8" # Version for RER-based Predictive Formulas
 
 if 'app_version' not in st.session_state or st.session_state.app_version != APP_VERSION:
     api_key = st.session_state.get('openai_api_key')
@@ -111,7 +113,7 @@ if 'app_version' not in st.session_state or st.session_state.app_version != APP_
     # State for managing dynamic creator and post lists
     if 'creators' not in st.session_state:
         st.session_state.creators = [
-            {'handle': 'creator_a', 'platform': 'Instagram', 'follower_count': 75000, 'niche_category': 'Gaming', 'audience_authenticity_score': 0.95, 'posts': [
+            {'handle': 'creator_a', 'platform': 'Instagram', 'follower_count': 75000, 'avg_historical_reach': 45000, 'niche_category': 'Gaming', 'audience_authenticity_score': 0.95, 'posts': [
                 {'format': 'Reel', 'cost': 1500, 'expected_engagement_rate': 5.5},
                 {'format': 'Story', 'cost': 500, 'expected_engagement_rate': 2.0}
             ]}
@@ -256,8 +258,9 @@ elif not st.session_state.comparison_profile_complete:
             c1, c2, c3, c4 = st.columns(4)
             creator['platform'] = c1.selectbox("Platform", ["Instagram", "TikTok", "YouTube"], key=f"platform_{i}")
             creator['follower_count'] = c2.number_input("Followers", min_value=0, format="%d", key=f"followers_{i}")
-            creator['niche_category'] = c3.selectbox("Niche", ['Fashion', 'Gaming', 'Finance', 'Lifestyle', 'Tech'], key=f"niche_{i}")
-            creator['audience_authenticity_score'] = c4.number_input("Audience Authenticity (0-1)", format="%.2f", key=f"auth_{i}")
+            # --- NEW INPUT FIELD ---
+            creator['avg_historical_reach'] = c3.number_input("Avg. Historical Reach", min_value=0, format="%d", key=f"hist_reach_{i}")
+            creator['niche_category'] = c4.selectbox("Niche", ['Fashion', 'Gaming', 'Finance', 'Lifestyle', 'Tech'], key=f"niche_{i}")
 
             # Post-level details
             st.markdown("**Creator Posts:**")
@@ -269,9 +272,13 @@ elif not st.session_state.comparison_profile_complete:
                 post['expected_engagement_rate'] = p3.number_input("Expected ER %", format="%.2f", key=f"post_er_{i}_{j}")
                 
                 # Live calculation for each post
-                temp_creator, _, _ = calculate_predictions([{'follower_count': creator['follower_count'], 'platform': creator['platform'], 'posts': [post]}])
-                post_reach = temp_creator[0]['posts'][0].get('predicted_reach', 0)
-                post_wes = temp_creator[0]['posts'][0].get('weighted_engagement_score', 0)
+                temp_creator_data = {
+                    'follower_count': creator.get('follower_count', 1),
+                    'avg_historical_reach': creator.get('avg_historical_reach', 0),
+                    'platform': creator.get('platform', 'Instagram'),
+                    'posts': [post]
+                }
+                _, post_reach, post_wes = calculate_predictions([temp_creator_data])
                 
                 with p4:
                     st.metric("Predicted Reach", f"{post_reach:,.0f}", delta_color="off")
@@ -317,7 +324,6 @@ elif st.session_state.comparison_profile_complete and not st.session_state.bench
     if st.button("Proceed to Benchmarking →", type="primary"):
         st.session_state.benchmark_flow_complete = True
         st.rerun()
-
 # ================================================================================
 # Step 3: Optional Benchmark Calculation 
 # ================================================================================
