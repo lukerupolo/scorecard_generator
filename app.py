@@ -198,132 +198,77 @@ elif not st.session_state.metrics_confirmed:
 # ================================================================================
 elif not st.session_state.comparison_profile_complete:
     st.header("Step 2: Define Campaign Profile for Comparison")
-    st.info("Provide the details of your campaign. This profile will be used to find the most similar historical campaigns to generate relevant benchmarks.")
     
-    # --- Main form for campaign details ---
     with st.form("campaign_profile_form"):
         st.subheader("Core Campaign Details")
-        campaign_name = st.text_input("Campaign Name")
-        objective = st.selectbox("Campaign Objective", ['Brand Awareness', 'Lead Generation', 'Sales', 'Audience Engagement'])
-        c1, c2 = st.columns(2)
-        start_date = c1.date_input("Start Date", value=datetime.now())
-        end_date = c2.date_input("End Date", value=datetime.now() + pd.Timedelta(days=30))
-        total_budget = st.number_input("Total Budget ($)", min_value=1, format="%d", value=100000)
-
-        st.markdown("---")
-        st.subheader("Target Audience & Creatives")
-        c1, c2 = st.columns(2)
-        audience_name = c1.selectbox("Primary Target Audience", ['US Tech Decision Makers', 'UK SMB Owners', 'Global Gaming Enthusiasts (18-25)'])
-        creative_types = c2.multiselect("Primary Creative Types", ['Video Ad', 'Image Ad', 'Text Ad', 'Email Template', 'Live Stream'])
+        campaign_name = st.text_input("Campaign Name", "Q4 Product Launch")
+        total_budget = st.number_input("Total Budget ($)", min_value=1, format="%d", value=250000)
         
-        # --- Placeholder inside form ---
         st.markdown("---")
-        st.subheader("Influencer & Creator Strategy Profile")
-        st.info("Define your creators and their specific posts in the section below. Their details will be saved with this profile.")
-        # Live calculation for display inside the form
-        _, total_reach, total_engagement = calculate_predictions(st.session_state.creators)
+        st.subheader("Live Predictive Summary")
+        _, total_reach, total_engagement = calculate_predictions_advanced(st.session_state.creators)
         total_creator_cost = sum(post.get('cost', 0) for creator in st.session_state.creators for post in creator.get('posts', []))
-        
         c1, c2, c3 = st.columns(3)
         c1.metric("Total Defined Cost", f"${total_creator_cost:,.0f}")
         c2.metric("Total Predicted Reach", f"{total_reach:,.0f}")
         c3.metric("Total Weighted Engagement Score", f"{total_engagement:,.0f}")
 
-
-        submitted = st.form_submit_button("Save Profile & Find Comparable Campaigns", type="primary")
+        submitted = st.form_submit_button("Save Profile & Proceed to Benchmarking →", type="primary")
         if submitted:
-            # When form is submitted, calculate final predictions and save
-            final_creators, total_reach, total_engagement = calculate_predictions(st.session_state.creators)
-            
+            final_creators, total_reach, total_engagement = calculate_predictions_advanced(st.session_state.creators)
             st.session_state.campaign_profile = {
-                "CoreDetails": {"CampaignName": campaign_name, "Objective": objective, "TotalBudget": total_budget},
-                "AudienceAndCreative": {"TargetAudience": audience_name, "CreativeTypes": creative_types},
-                "InfluencerStrategy": {
-                    "CreatorList": final_creators,
-                    "TotalPredictedReach": total_reach,
-                    "TotalWeightedEngagement": total_engagement
-                }
+                "CoreDetails": {"CampaignName": campaign_name, "TotalBudget": total_budget},
+                "InfluencerStrategy": {"CreatorList": final_creators, "TotalPredictedReach": total_reach, "TotalWeightedEngagement": total_engagement}
             }
             st.session_state.comparison_profile_complete = True
             st.rerun()
 
-    # --- UI for managing creators and posts (OUTSIDE the form) ---
     st.markdown("---")
     st.subheader("Define Creator Activations")
-    
     for i, creator in enumerate(st.session_state.creators):
         with st.expander(f"Creator {i+1}: {creator.get('handle', 'New Creator')}", expanded=True):
-            # Creator-level details
             creator['handle'] = st.text_input("Handle", value=creator.get('handle', ''), key=f"handle_{i}")
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2, c3 = st.columns(3)
             creator['platform'] = c1.selectbox("Platform", ["Instagram", "TikTok", "YouTube"], key=f"platform_{i}")
             creator['follower_count'] = c2.number_input("Followers", min_value=0, format="%d", key=f"followers_{i}")
-            # --- NEW INPUT FIELD ---
-            creator['avg_historical_reach'] = c3.number_input("Avg. Historical Reach", min_value=0, format="%d", key=f"hist_reach_{i}")
-            creator['niche_category'] = c4.selectbox("Niche", ['Fashion', 'Gaming', 'Finance', 'Lifestyle', 'Tech'], key=f"niche_{i}")
+            creator['saturation'] = c3.selectbox("Creator Saturation", ["Low", "Medium", "High"], help="How frequently does this creator post sponsored content?", key=f"saturation_{i}")
 
-            # Post-level details
             st.markdown("**Creator Posts:**")
             for j, post in enumerate(creator.get('posts', [])):
                 st.markdown(f"**Post {j+1}**")
-                p1, p2, p3, p4 = st.columns([2,1,1,1])
+                p1, p2, p3 = st.columns(3)
                 post['format'] = p1.selectbox("Format", ['Reel', 'Story', 'Static Post', 'Long-form Video'], key=f"post_format_{i}_{j}")
                 post['cost'] = p2.number_input("Cost ($)", min_value=0, format="%d", key=f"post_cost_{i}_{j}")
-                post['expected_engagement_rate'] = p3.number_input("Expected ER %", format="%.2f", key=f"post_er_{i}_{j}")
+                post['paid_amplification'] = p3.number_input("Paid Amplification ($)", min_value=0, format="%d", key=f"paid_{i}_{j}")
                 
-                # Live calculation for each post
-                temp_creator_data = {
-                    'follower_count': creator.get('follower_count', 1),
-                    'avg_historical_reach': creator.get('avg_historical_reach', 0),
-                    'platform': creator.get('platform', 'Instagram'),
-                    'posts': [post]
-                }
-                _, post_reach, post_wes = calculate_predictions([temp_creator_data])
+                p4, p5, p6 = st.columns(3)
+                post['historical_reach_for_format'] = p4.number_input("Historical Reach for this Format", min_value=0, format="%d", key=f"post_hist_reach_{i}_{j}")
+                post['historical_er_for_format'] = p5.number_input("Historical ER for this Format (%)", format="%.2f", key=f"post_hist_er_{i}_{j}")
+                post['cta_type'] = p6.selectbox("CTA Type", ["Soft CTA", "Hard CTA"], help="A 'Hard CTA' may slightly lower organic engagement.", key=f"cta_{i}_{j}")
                 
-                with p4:
-                    st.metric("Predicted Reach", f"{post_reach:,.0f}", delta_color="off")
-                    st.metric("Depth (WES)", f"{post_wes:,.0f}", delta_color="off")
+                post['is_new_content'] = st.toggle("First-Use Content", value=True, key=f"new_{i}_{j}")
+                
+                st.markdown("---")
+                temp_data = {'follower_count': creator['follower_count'], 'saturation': creator['saturation'], 'posts': [post]}
+                _, post_reach, post_wes = calculate_predictions_advanced([temp_data])
+                pr1, pr2 = st.columns(2)
+                pr1.metric("Predicted Post Reach", f"{post_reach:,.0f}")
+                pr2.metric("Predicted Post Depth (WES)", f"{post_wes:,.0f}")
 
-
-                if st.button("🗑️", key=f"remove_post_{i}_{j}", help="Remove this post"):
+                if st.button("Remove Post", key=f"remove_post_{i}_{j}"):
                     st.session_state.creators[i]['posts'].pop(j)
                     st.rerun()
             
             if st.button("Add Post", key=f"add_post_{i}"):
-                if 'posts' not in st.session_state.creators[i]:
-                    st.session_state.creators[i]['posts'] = []
-                st.session_state.creators[i]['posts'].append({'format': 'Reel', 'cost': 0, 'expected_engagement_rate': 0.0})
+                if 'posts' not in st.session_state.creators[i]: st.session_state.creators[i]['posts'] = []
+                st.session_state.creators[i]['posts'].append({})
                 st.rerun()
 
     st.markdown("---")
     c1, c2 = st.columns(2)
-    if c1.button("Add Creator"):
-        st.session_state.creators.append({})
-        st.rerun()
-    if c2.button("Remove Last Creator"):
-        if st.session_state.creators:
-            st.session_state.creators.pop()
-            st.rerun()
-
-elif st.session_state.comparison_profile_complete and not st.session_state.benchmark_flow_complete:
-    st.header("Step 2: Campaign Profile Saved")
-    st.success("Your campaign profile has been successfully saved.")
-    st.subheader("Your Saved Influencer Strategy Profile")
-    st.json(st.session_state.campaign_profile.get("InfluencerStrategy", {}))
-
-    st.markdown("---")
-    st.subheader("Comparable Historical Campaigns")
-    st.info("Based on your detailed profile, here are the most relevant historical campaigns.")
-    comparable_campaigns_data = {
-        'Historical Campaign': ['Q4 2023 - Project Titan', 'Q1 2024 - Nova Launch'],
-        'Similarity Score': ['95%', '91%'],
-        'Objective': [st.session_state.campaign_profile['CoreDetails'].get('Objective', 'N/A')] * 2,
-    }
-    st.dataframe(pd.DataFrame(comparable_campaigns_data), use_container_width=True, hide_index=True)
-
-    if st.button("Proceed to Benchmarking →", type="primary"):
-        st.session_state.benchmark_flow_complete = True
-        st.rerun()
+    if c1.button("Add Creator"): st.session_state.creators.append({}); st.rerun()
+    if c2.button("Remove Last Creator"): 
+        if st.session_state.creators: st.session_state.creators.pop(); st.rerun()
 # ================================================================================
 # Step 3: Optional Benchmark Calculation 
 # ================================================================================
