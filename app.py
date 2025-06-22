@@ -18,7 +18,7 @@ st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
 APP_VERSION = "5.0.5" # Version for Spreadsheet-based Influencer Profiling
 
-if 'app_version' not in st.session_state or st.session_state.app_version != APP_VERSION:
+if 'app_version' not in st.session_state or st.session_state.app_version != APP_VERSION: 
     api_key = st.session_state.get('openai_api_key')
     # Clear all state to ensure a clean start
     for key in list(st.session_state.keys()):
