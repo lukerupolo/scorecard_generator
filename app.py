@@ -138,7 +138,7 @@ elif not st.session_state.comparison_profile_complete:
         creative_types = c2.multiselect("Primary Creative Types", ['Video Ad', 'Image Ad', 'Text Ad', 'Email Template', 'Live Stream'])
         
         st.markdown("---")
-        # --- NEW INFLUENCER STRATEGY SECTION ---
+        # --- NEW INFLUENCER STRATEGY SECTION (Replaces Channel Mix) ---
         st.subheader("Influencer & Creator Strategy Profile")
         
         # 1.1 Financial Allocation & Scale
