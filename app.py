@@ -12,15 +12,28 @@ from powerpoint import create_presentation
 from excel import create_excel_workbook
 
 # ================================================================================
+# Helper Function for Influencer Analysis
+# ================================================================================
+def get_influencer_tier(followers):
+    """Categorizes an influencer into a tier based on follower count."""
+    if followers >= 1000000:
+        return "Mega"
+    elif followers >= 250000:
+        return "Macro"
+    elif followers >= 50000:
+        return "Mid"
+    else:
+        return "Micro"
+
+# ================================================================================
 # 1) App State Initialization
 # ================================================================================
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
-APP_VERSION = "5.0.4" # Version for Strategic Influencer Profiling
+APP_VERSION = "5.0.5" # Version for Granular Influencer Planning
 
 if 'app_version' not in st.session_state or st.session_state.app_version != APP_VERSION:
     api_key = st.session_state.get('openai_api_key')
-    # Clear all state to ensure a clean start
     for key in list(st.session_state.keys()):
         del st.session_state[key]
 
@@ -40,11 +53,13 @@ if 'app_version' not in st.session_state or st.session_state.app_version != APP_
     st.session_state.avg_actuals = {}
     st.session_state.saved_moments = {}
     st.session_state.campaign_profile = {}
+    # State for managing the dynamic list of creators
+    if 'creators' not in st.session_state:
+        st.session_state.creators = []
 
 
 st.title("Event Marketing Scorecard & Presentation Generator")
 render_sidebar()
-
 # ================================================================================
 # Step 0: API Key Entry
 # ================================================================================
@@ -141,86 +156,89 @@ elif not st.session_state.comparison_profile_complete:
         # --- NEW INFLUENCER STRATEGY SECTION (Replaces Channel Mix) ---
         st.subheader("Influencer & Creator Strategy Profile")
         
-        # 1.1 Financial Allocation & Scale
-        st.write("**1. Financial Allocation & Scale**")
-        creator_budget_percent = st.slider("% of Total Campaign Budget for Creators", 0, 100, 50)
-        creator_budget_abs = (creator_budget_percent / 100) * total_budget
-        st.info(f"Estimated Creator Budget: **${creator_budget_abs:,.0f}**")
-        
-        st.write("Compensation Model Mix (%)")
-        c1, c2, c3 = st.columns(3)
-        comp_flat = c1.number_input("% Flat Fee", 0, 100, 80, key="comp_flat")
-        comp_perf = c2.number_input("% Performance/Commission", 0, 100, 20, key="comp_perf")
-        comp_gifting = c3.number_input("% Gifting/Value-in-Kind", 0, 100, 0, key="comp_gifting")
-        
-        # 1.2. Creator Portfolio Mix
-        st.write("**2. Creator Portfolio Mix**")
-        st.write("Tier-Based Budget Allocation (%)")
-        c1, c2, c3, c4 = st.columns(4)
-        tier_mega = c1.number_input("% Mega (1M+)", 0, 100, 50, key="tier_mega")
-        tier_macro = c2.number_input("% Macro (250k-1M)", 0, 100, 30, key="tier_macro")
-        tier_mid = c3.number_input("% Mid (50k-250k)", 0, 100, 20, key="tier_mid")
-        tier_micro = c4.number_input("% Micro (<50k)", 0, 100, 0, key="tier_micro")
-        
-        creator_niche = st.radio("Creator Niche / Vertical", ["Primarily Endemic", "Primarily Non-Endemic", "A Mix of Both"], horizontal=True)
+        # This section is now for displaying the list of creators.
+        # The actual inputs are handled outside the form to allow for dynamic "Add" buttons.
+        if not st.session_state.creators:
+            st.warning("No creators added yet. Please add creators using the buttons below the form.")
+        else:
+            for i, creator in enumerate(st.session_state.creators):
+                st.markdown(f"**Creator {i+1}: {creator.get('name', 'New Creator')}**")
+                st.write(f"> Followers: {creator.get('follower_count', 0):,}, Compensation: ${creator.get('compensation', 0):,}")
+                if creator.get('posts'):
+                    for j, post in enumerate(creator['posts']):
+                         st.write(f"> - Post {j+1}: {post.get('format', 'N/A')} ({post.get('cta', 'N/A')})")
 
-        # 1.3. Content & Activation Strategy
-        st.write("**3. Content & Activation Strategy**")
-        c1, c2 = st.columns(2)
-        primary_format = c1.selectbox("Primary Content Format", ["Short-form Video", "Long-form Video", "Static Images/Carousels", "Live Streams"])
-        primary_cta = c2.selectbox("Primary Call-to-Action (CTA)", ["Watch/View (Reach)", "Comment/Share (Depth)", "Click/Sign-up/Buy (Action)"])
-        
-        # Final Submit
         submitted = st.form_submit_button("Save Profile & Find Comparable Campaigns", type="primary")
         if submitted:
-            # --- Validation ---
-            if (comp_flat + comp_perf + comp_gifting) != 100:
-                st.error("Error: Compensation Model Mix percentages must add up to 100.")
-            elif (tier_mega + tier_macro + tier_mid + tier_micro) != 100:
-                st.error("Error: Tier-Based Budget Allocation percentages must add up to 100.")
-            else:
-                st.session_state.campaign_profile = {
-                    "CoreDetails": {
-                        "CampaignName": campaign_name,
-                        "Objective": objective,
-                        "StartDate": str(start_date),
-                        "EndDate": str(end_date),
-                        "TotalBudget": total_budget,
-                    },
-                    "AudienceAndCreative": {
-                         "TargetAudience": audience_name,
-                         "CreativeTypes": creative_types,
-                    },
-                    "InfluencerStrategy": {
-                        "Financials": {
-                            "CreatorBudgetPercentage": creator_budget_percent,
-                            "CompensationMix": {
-                                "FlatFee": comp_flat,
-                                "Performance": comp_perf,
-                                "Gifting": comp_gifting
-                            }
-                        },
-                        "Portfolio": {
-                            "TierAllocation": {
-                                "Mega": tier_mega,
-                                "Macro": tier_macro,
-                                "Mid": tier_mid,
-                                "Micro": tier_micro
-                            },
-                            "CreatorNiche": creator_niche
-                        },
-                        "Activation": {
-                            "PrimaryContentFormat": primary_format,
-                            "PrimaryCTA": primary_cta
-                        }
+            # --- Build the Influencer Strategy Profile from the state ---
+            total_creator_spend = sum(c.get('compensation', 0) for c in st.session_state.creators)
+            
+            # Auto-calculate tier allocation based on the creator list
+            tier_spend = {"Mega": 0, "Macro": 0, "Mid": 0, "Micro": 0}
+            for c in st.session_state.creators:
+                tier = get_influencer_tier(c.get('follower_count', 0))
+                tier_spend[tier] += c.get('compensation', 0)
+
+            tier_allocation_percent = {
+                tier: (spend / total_creator_spend) * 100 if total_creator_spend > 0 else 0
+                for tier, spend in tier_spend.items()
+            }
+            
+            st.session_state.campaign_profile = {
+                "CoreDetails": { "CampaignName": campaign_name, "Objective": objective, "TotalBudget": total_budget },
+                "AudienceAndCreative": { "TargetAudience": audience_name, "CreativeTypes": creative_types },
+                "InfluencerStrategy": {
+                    "RawCreatorList": st.session_state.creators,
+                    "CalculatedPortfolio": {
+                        "TotalCreatorSpend": total_creator_spend,
+                        "CreatorBudgetPercentage": (total_creator_spend / total_budget) * 100 if total_budget > 0 else 0,
+                        "TierAllocation": tier_allocation_percent
                     }
                 }
-                st.session_state.comparison_profile_complete = True
+            }
+            st.session_state.comparison_profile_complete = True
+            st.rerun()
+
+    # --- Creator and Post management UI (OUTSIDE THE FORM) ---
+    st.markdown("---")
+    st.subheader("Define Influencer Activations")
+
+    for i, creator in enumerate(st.session_state.creators):
+        with st.expander(f"Edit Creator {i+1}: {creator.get('name', '')}"):
+            creator['name'] = st.text_input("Name", value=creator.get('name', ''), key=f"name_{i}")
+            c1, c2 = st.columns(2)
+            creator['follower_count'] = c1.number_input("Followers", min_value=0, value=creator.get('follower_count', 0), format="%d", key=f"followers_{i}")
+            creator['compensation'] = c2.number_input("Compensation ($)", min_value=0, value=creator.get('compensation', 0), format="%d", key=f"comp_{i}")
+            
+            st.markdown("###### Content & Activation Strategy")
+            if 'posts' not in creator:
+                creator['posts'] = []
+            
+            for j, post in enumerate(creator['posts']):
+                pc1, pc2, pc3 = st.columns([2,2,1])
+                post['format'] = pc1.selectbox("Content Format", ["Short-form Video", "Long-form Video", "Static Images/Carousels", "Live Streams"], key=f"format_{i}_{j}")
+                post['cta'] = pc2.selectbox("Primary Call-to-Action (CTA)", ["Watch/View (Reach)", "Comment/Share (Depth)", "Click/Sign-up/Buy (Action)"], key=f"cta_{i}_{j}")
+                if pc3.button("Remove Post", key=f"remove_post_{i}_{j}"):
+                    creator['posts'].pop(j)
+                    st.rerun()
+
+            if st.button("Add Post", key=f"add_post_{i}"):
+                creator['posts'].append({})
                 st.rerun()
+    
+    c1, c2 = st.columns(2)
+    if c1.button("Add a New Creator"):
+        st.session_state.creators.append({})
+        st.rerun()
+    if c2.button("Remove Last Creator"):
+        if st.session_state.creators:
+            st.session_state.creators.pop()
+            st.rerun()
+
 
 elif st.session_state.comparison_profile_complete and not st.session_state.benchmark_flow_complete:
     st.header("Step 2: Campaign Profile Saved")
-    st.success("Your campaign profile has been successfully saved. This detailed profile is now ready to be matched against the historical database.")
+    st.success("Your campaign profile has been successfully saved.")
     
     st.subheader("Your Saved Influencer Strategy Profile")
     st.json(st.session_state.campaign_profile.get("InfluencerStrategy", {}))
@@ -229,13 +247,10 @@ elif st.session_state.comparison_profile_complete and not st.session_state.bench
     st.subheader("Comparable Historical Campaigns")
     st.info("Based on your detailed profile, here are the most relevant historical campaigns. The benchmarks in the next step will be calculated from the average performance of this set.")
     
-    # This data is now more meaningful because it's based on a more detailed profile
     comparable_campaigns_data = {
         'Historical Campaign': ['Q4 2023 - Project Titan', 'Q1 2024 - Nova Launch', 'Summer 2022 - Falcon'],
         'Similarity Score': ['95%', '91%', '87%'],
         'Objective': [st.session_state.campaign_profile['CoreDetails'].get('Objective', 'N/A')] * 3,
-        'Total Budget': ['$7.5M', '$8.0M', '$6.9M'],
-        'Creator Budget %': ['40%', '45%', '42%']
     }
     st.dataframe(pd.DataFrame(comparable_campaigns_data), use_container_width=True, hide_index=True)
 
