@@ -30,7 +30,7 @@ def get_influencer_tier(followers):
 # ================================================================================
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
-APP_VERSION = "5.0.5" # Version for Granular Influencer Planning
+APP_VERSION = "5.0.6" # Version for UI nesting fix
 
 if 'app_version' not in st.session_state or st.session_state.app_version != APP_VERSION:
     api_key = st.session_state.get('openai_api_key')
@@ -60,6 +60,7 @@ if 'app_version' not in st.session_state or st.session_state.app_version != APP_
 
 st.title("Event Marketing Scorecard & Presentation Generator")
 render_sidebar()
+
 # ================================================================================
 # Step 0: API Key Entry
 # ================================================================================
@@ -80,6 +81,7 @@ if not st.session_state.api_key_entered:
 # ================================================================================
 elif not st.session_state.metrics_confirmed:
     st.header("Step 1: Select Your Core Scorecard Metrics (RDA)")
+    # This section remains unchanged
     st.info("Select metrics from the dropdown, or add your own below. Press Enter to add a custom metric.")
     
     predefined_metrics = [
@@ -153,27 +155,21 @@ elif not st.session_state.comparison_profile_complete:
         creative_types = c2.multiselect("Primary Creative Types", ['Video Ad', 'Image Ad', 'Text Ad', 'Email Template', 'Live Stream'])
         
         st.markdown("---")
-        # --- NEW INFLUENCER STRATEGY SECTION (Replaces Channel Mix) ---
+        # --- Influencer section is now just a placeholder summary inside the form ---
         st.subheader("Influencer & Creator Strategy Profile")
-        
-        # This section is now for displaying the list of creators.
-        # The actual inputs are handled outside the form to allow for dynamic "Add" buttons.
         if not st.session_state.creators:
-            st.warning("No creators added yet. Please add creators using the buttons below the form.")
+            st.warning("No creators added yet. Please define your activations in the section below the form.")
         else:
-            for i, creator in enumerate(st.session_state.creators):
-                st.markdown(f"**Creator {i+1}: {creator.get('name', 'New Creator')}**")
-                st.write(f"> Followers: {creator.get('follower_count', 0):,}, Compensation: ${creator.get('compensation', 0):,}")
-                if creator.get('posts'):
-                    for j, post in enumerate(creator['posts']):
-                         st.write(f"> - Post {j+1}: {post.get('format', 'N/A')} ({post.get('cta', 'N/A')})")
+            st.success(f"{len(st.session_state.creators)} creator(s) defined. See details below the form.")
+            # Display a quick summary
+            total_creator_spend = sum(c.get('compensation', 0) for c in st.session_state.creators)
+            st.info(f"Total defined creator spend: **${total_creator_spend:,.0f}**")
+
 
         submitted = st.form_submit_button("Save Profile & Find Comparable Campaigns", type="primary")
         if submitted:
             # --- Build the Influencer Strategy Profile from the state ---
             total_creator_spend = sum(c.get('compensation', 0) for c in st.session_state.creators)
-            
-            # Auto-calculate tier allocation based on the creator list
             tier_spend = {"Mega": 0, "Macro": 0, "Mid": 0, "Micro": 0}
             for c in st.session_state.creators:
                 tier = get_influencer_tier(c.get('follower_count', 0))
@@ -199,41 +195,43 @@ elif not st.session_state.comparison_profile_complete:
             st.session_state.comparison_profile_complete = True
             st.rerun()
 
-    # --- Creator and Post management UI (OUTSIDE THE FORM) ---
+    # --- Creator and Post management UI (OUTSIDE THE FORM but visually grouped) ---
     st.markdown("---")
-    st.subheader("Define Influencer Activations")
+    with st.expander("**Define Influencer Activations**", expanded=True):
+        st.info("Add each creator and define the content they will produce for this campaign.")
+        for i, creator in enumerate(st.session_state.creators):
+            with st.container(border=True):
+                st.markdown(f"##### Creator {i+1}")
+                creator['name'] = st.text_input("Name", value=creator.get('name', ''), key=f"name_{i}")
+                c1, c2 = st.columns(2)
+                creator['follower_count'] = c1.number_input("Followers", min_value=0, value=creator.get('follower_count', 0), format="%d", key=f"followers_{i}")
+                creator['compensation'] = c2.number_input("Compensation ($)", min_value=0, value=creator.get('compensation', 0), format="%d", key=f"comp_{i}")
+                
+                st.markdown("###### Content & Activation Strategy")
+                if 'posts' not in creator:
+                    creator['posts'] = []
+                
+                for j, post in enumerate(creator['posts']):
+                    pc1, pc2, pc3 = st.columns([2,2,1])
+                    post['format'] = pc1.selectbox("Content Format", ["Short-form Video", "Long-form Video", "Static Images/Carousels", "Live Streams"], key=f"format_{i}_{j}")
+                    post['cta'] = pc2.selectbox("Primary Call-to-Action (CTA)", ["Watch/View (Reach)", "Comment/Share (Depth)", "Click/Sign-up/Buy (Action)"], key=f"cta_{i}_{j}")
+                    if pc3.button("Remove Post", key=f"remove_post_{i}_{j}"):
+                        creator['posts'].pop(j)
+                        st.rerun()
 
-    for i, creator in enumerate(st.session_state.creators):
-        with st.expander(f"Edit Creator {i+1}: {creator.get('name', '')}"):
-            creator['name'] = st.text_input("Name", value=creator.get('name', ''), key=f"name_{i}")
-            c1, c2 = st.columns(2)
-            creator['follower_count'] = c1.number_input("Followers", min_value=0, value=creator.get('follower_count', 0), format="%d", key=f"followers_{i}")
-            creator['compensation'] = c2.number_input("Compensation ($)", min_value=0, value=creator.get('compensation', 0), format="%d", key=f"comp_{i}")
-            
-            st.markdown("###### Content & Activation Strategy")
-            if 'posts' not in creator:
-                creator['posts'] = []
-            
-            for j, post in enumerate(creator['posts']):
-                pc1, pc2, pc3 = st.columns([2,2,1])
-                post['format'] = pc1.selectbox("Content Format", ["Short-form Video", "Long-form Video", "Static Images/Carousels", "Live Streams"], key=f"format_{i}_{j}")
-                post['cta'] = pc2.selectbox("Primary Call-to-Action (CTA)", ["Watch/View (Reach)", "Comment/Share (Depth)", "Click/Sign-up/Buy (Action)"], key=f"cta_{i}_{j}")
-                if pc3.button("Remove Post", key=f"remove_post_{i}_{j}"):
-                    creator['posts'].pop(j)
+                if st.button("Add Post", key=f"add_post_{i}"):
+                    creator['posts'].append({})
                     st.rerun()
-
-            if st.button("Add Post", key=f"add_post_{i}"):
-                creator['posts'].append({})
-                st.rerun()
-    
-    c1, c2 = st.columns(2)
-    if c1.button("Add a New Creator"):
-        st.session_state.creators.append({})
-        st.rerun()
-    if c2.button("Remove Last Creator"):
-        if st.session_state.creators:
-            st.session_state.creators.pop()
+        
+        st.markdown("---")
+        c1, c2 = st.columns(2)
+        if c1.button("Add a New Creator"):
+            st.session_state.creators.append({})
             st.rerun()
+        if c2.button("Remove Last Creator"):
+            if st.session_state.creators:
+                st.session_state.creators.pop()
+                st.rerun()
 
 
 elif st.session_state.comparison_profile_complete and not st.session_state.benchmark_flow_complete:
@@ -259,20 +257,17 @@ elif st.session_state.comparison_profile_complete and not st.session_state.bench
         st.rerun()
 
 # ================================================================================
-# Step 3: Optional Benchmark Calculation 
+# Step 3 & Beyond (Code remains the same)
 # ================================================================================
 elif not st.session_state.benchmark_flow_complete:
     st.header("Step 3: Auto-Generate Benchmarks")
     st.info("This section is now placeholder. Benchmarks would be calculated from the campaigns found in Step 2.")
-    
     if st.button("Proceed to Scorecard Creation →", type="primary"):
-            st.session_state.benchmark_flow_complete = True
-            st.rerun()
-
-# ================================================================================
-# Step 4 & 5 - Main App Logic
-# ================================================================================
+        st.session_state.benchmark_flow_complete = True
+        st.rerun()
 else:
+    st.header("Step 4: Build & Save Scorecard Moments")
+    # This section remains unchanged and will use the data from the previous steps
     app_config = {
         'openai_api_key': st.session_state.openai_api_key, 
         'metrics': st.session_state.metrics,
@@ -280,7 +275,6 @@ else:
         'avg_actuals': st.session_state.get('avg_actuals')
     }
     
-    st.header("Step 4: Build & Save Scorecard Moments")
     if 'sheets_dict' not in st.session_state or st.session_state.sheets_dict is None:
         st.session_state.sheets_dict = process_scorecard_data(app_config)
 
