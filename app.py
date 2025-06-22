@@ -12,11 +12,79 @@ from powerpoint import create_presentation
 from excel import create_excel_workbook
 
 # ================================================================================
+# NEW: Helper Function for Predictive Calculations
+# ================================================================================
+def calculate_predictions(creators):
+    """
+    Calculates the predicted reach and weighted engagement score for each post
+    and aggregates the totals for the campaign.
+
+    Args:
+        creators (list): A list of creator dictionaries.
+
+    Returns:
+        tuple: A tuple containing the updated list of creators with predictions,
+               the total predicted reach, and the total weighted engagement score.
+    """
+    total_predicted_reach = 0
+    total_weighted_engagement = 0
+
+    # Platform and format-specific weights for the formulas
+    # These would ideally be derived from historical data analysis
+    reach_weights = {
+        'Instagram': {'Reel': 1.2, 'Story': 0.4, 'Static Post': 0.9, 'Long-form Video': 0.7},
+        'TikTok': {'Reel': 1.5, 'Story': 0.5, 'Static Post': 0.8, 'Long-form Video': 0.9}, # Note: 'Reel' for consistency
+        'YouTube': {'Long-form Video': 0.8, 'Reel': 1.3} # Note: 'Reel' for Shorts
+    }
+    engagement_weights = {
+        'Instagram': {'likes': 1, 'comments': 3, 'shares': 5},
+        'TikTok': {'likes': 1, 'comments': 2, 'shares': 4},
+        'YouTube': {'likes': 1, 'comments': 4, 'shares': 2}
+    }
+
+    for creator in creators:
+        # Assume a baseline Historical Reach Efficiency Rate (RER)
+        # In a real model, this would be specific to the creator
+        historical_rer = 0.6  # Assumes a creator typically reaches 60% of their followers
+
+        if 'posts' in creator and creator['posts']:
+            for post in creator['posts']:
+                follower_count = creator.get('follower_count', 0)
+                platform = creator.get('platform', 'Instagram')
+                post_format = post.get('format', 'Reel')
+                expected_er = post.get('expected_engagement_rate', 0) / 100.0
+
+                # --- Calculate Predicted Reach for the post ---
+                platform_format_weight = reach_weights.get(platform, {}).get(post_format, 1.0)
+                predicted_reach = (follower_count * historical_rer) * platform_format_weight
+                post['predicted_reach'] = predicted_reach
+                total_predicted_reach += predicted_reach
+
+                # --- Calculate Weighted Engagement Score for the post ---
+                estimated_interactions = predicted_reach * expected_er
+                
+                # Assume a simple interaction split for this example
+                likes = estimated_interactions * 0.8
+                comments = estimated_interactions * 0.15
+                shares = estimated_interactions * 0.05
+                
+                platform_eng_weights = engagement_weights.get(platform, {})
+                weighted_score = (
+                    likes * platform_eng_weights.get('likes', 1) +
+                    comments * platform_eng_weights.get('comments', 1) +
+                    shares * platform_eng_weights.get('shares', 1)
+                )
+                post['weighted_engagement_score'] = weighted_score
+                total_weighted_engagement += weighted_score
+
+    return creators, total_predicted_reach, total_weighted_engagement
+
+# ================================================================================
 # 1) App State Initialization
 # ================================================================================
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
-APP_VERSION = "5.0.6" # Version for Granular Post-by-Post Costing
+APP_VERSION = "5.0.7" # Version for Predictive Formulas
 
 if 'app_version' not in st.session_state or st.session_state.app_version != APP_VERSION:
     api_key = st.session_state.get('openai_api_key')
@@ -150,16 +218,29 @@ elif not st.session_state.comparison_profile_complete:
         st.markdown("---")
         st.subheader("Influencer & Creator Strategy Profile")
         st.info("Define your creators and their specific posts in the section below. Their details will be saved with this profile.")
+        # Live calculation for display inside the form
+        _, total_reach, total_engagement = calculate_predictions(st.session_state.creators)
         total_creator_cost = sum(post.get('cost', 0) for creator in st.session_state.creators for post in creator.get('posts', []))
-        st.success(f"Total defined creator cost from posts: **${total_creator_cost:,.0f}**")
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Defined Cost", f"${total_creator_cost:,.0f}")
+        c2.metric("Total Predicted Reach", f"{total_reach:,.0f}")
+        c3.metric("Total Weighted Engagement Score", f"{total_engagement:,.0f}")
+
 
         submitted = st.form_submit_button("Save Profile & Find Comparable Campaigns", type="primary")
         if submitted:
-            # When form is submitted, read the latest creator data from session state
+            # When form is submitted, calculate final predictions and save
+            final_creators, total_reach, total_engagement = calculate_predictions(st.session_state.creators)
+            
             st.session_state.campaign_profile = {
                 "CoreDetails": {"CampaignName": campaign_name, "Objective": objective, "TotalBudget": total_budget},
                 "AudienceAndCreative": {"TargetAudience": audience_name, "CreativeTypes": creative_types},
-                "InfluencerStrategy": {"CreatorList": st.session_state.creators}
+                "InfluencerStrategy": {
+                    "CreatorList": final_creators,
+                    "TotalPredictedReach": total_reach,
+                    "TotalWeightedEngagement": total_engagement
+                }
             }
             st.session_state.comparison_profile_complete = True
             st.rerun()
@@ -186,7 +267,18 @@ elif not st.session_state.comparison_profile_complete:
                 post['format'] = p1.selectbox("Format", ['Reel', 'Story', 'Static Post', 'Long-form Video'], key=f"post_format_{i}_{j}")
                 post['cost'] = p2.number_input("Cost ($)", min_value=0, format="%d", key=f"post_cost_{i}_{j}")
                 post['expected_engagement_rate'] = p3.number_input("Expected ER %", format="%.2f", key=f"post_er_{i}_{j}")
-                if p4.button("🗑️", key=f"remove_post_{i}_{j}", help="Remove this post"):
+                
+                # Live calculation for each post
+                temp_creator, _, _ = calculate_predictions([{'follower_count': creator['follower_count'], 'platform': creator['platform'], 'posts': [post]}])
+                post_reach = temp_creator[0]['posts'][0].get('predicted_reach', 0)
+                post_wes = temp_creator[0]['posts'][0].get('weighted_engagement_score', 0)
+                
+                with p4:
+                    st.metric("Predicted Reach", f"{post_reach:,.0f}", delta_color="off")
+                    st.metric("Depth (WES)", f"{post_wes:,.0f}", delta_color="off")
+
+
+                if st.button("🗑️", key=f"remove_post_{i}_{j}", help="Remove this post"):
                     st.session_state.creators[i]['posts'].pop(j)
                     st.rerun()
             
