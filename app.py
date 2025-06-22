@@ -9,8 +9,6 @@ from ui import render_sidebar
 from data_processing import process_scorecard_data, calculate_all_benchmarks, get_ai_metric_categories
 from powerpoint import create_presentation
 from excel import create_excel_workbook
-# The strategy.py file is no longer used in this new workflow
-# from strategy import generate_strategy
 
 # ================================================================================
 # 1) App State Initialization
@@ -28,7 +26,6 @@ if 'app_version' not in st.session_state or st.session_state.app_version != APP_
     st.session_state.api_key_entered = True if api_key else False
     st.session_state.openai_api_key = api_key
     st.session_state.metrics_confirmed = False
-    # This state is now for the new comparison profile
     st.session_state.comparison_profile_complete = False
     st.session_state.benchmark_flow_complete = False
     st.session_state.scorecard_ready = False
@@ -40,9 +37,7 @@ if 'app_version' not in st.session_state or st.session_state.app_version != APP_
     st.session_state.proposed_benchmarks = {}
     st.session_state.avg_actuals = {}
     st.session_state.saved_moments = {}
-    # State to hold the new detailed campaign profile
     st.session_state.campaign_profile = {}
-    # State to hold the selected channels
     if 'selected_channels' not in st.session_state:
         st.session_state.selected_channels = []
 
@@ -55,14 +50,71 @@ render_sidebar()
 # ================================================================================
 if not st.session_state.api_key_entered:
     st.header("Step 0: Enter Your OpenAI API Key")
-    # ... (code for API key entry is unchanged)
+    with st.form("api_key_form"):
+        api_key_input = st.text_input("🔑 OpenAI API Key", type="password")
+        if st.form_submit_button("Submit API Key"):
+            if api_key_input:
+                st.session_state.openai_api_key = api_key_input
+                st.session_state.api_key_entered = True
+                st.rerun()
+            else:
+                st.error("Please enter a valid OpenAI API key.")
 
 # ================================================================================
 # Step 1: Metric Selection
 # ================================================================================
 elif not st.session_state.metrics_confirmed:
     st.header("Step 1: Select Your Core Scorecard Metrics (RDA)")
-    # ... (code for Metric Selection is unchanged)
+    st.info("Select metrics from the dropdown, or add your own below. Press Enter to add a custom metric.")
+    
+    predefined_metrics = [
+        "Video views (Franchise)", "Social Impressions", "Press UMV (unique monthly views)",
+        "Social Conversation Volume", "Views trailer", "UGC Views", 
+        "Social Impressions-Posts with trailer (FB, IG, X)", "Social Impressions-All posts",
+        "Nb. press articles", "Social Sentiment (Franchise)", "Trailer avg % viewed (Youtube)",
+        "Email Open Rate (OR)", "Email Click Through Rate (CTR)", "Labs program sign-ups",
+        "Discord channel sign-ups", "% Trailer views from Discord (Youtube)",
+        "Labs sign up click-through Web", "Sessions", "DAU", "Hours Watched (Streams)"
+    ]
+
+    # Initialize current_metrics in session state if not present
+    if 'current_metrics' not in st.session_state:
+        st.session_state.current_metrics = ["Video views (Franchise)", "Social Impressions"]
+
+    all_possible_metrics = sorted(list(set(predefined_metrics + st.session_state.current_metrics)))
+
+    def update_selections():
+        st.session_state.current_metrics = st.session_state.multiselect_key
+
+    st.multiselect(
+        "Select metrics:", 
+        options=all_possible_metrics, 
+        default=st.session_state.current_metrics,
+        key="multiselect_key",
+        on_change=update_selections
+    )
+    
+    def add_custom_metric():
+        custom_metric = st.session_state.custom_metric_input.strip()
+        if custom_metric and custom_metric not in st.session_state.current_metrics:
+            st.session_state.current_metrics.append(custom_metric)
+        st.session_state.custom_metric_input = ""
+
+    st.text_input(
+        "✍️ Add Custom Metric (and press Enter)", 
+        key="custom_metric_input", 
+        on_change=add_custom_metric
+    )
+
+    st.markdown("---")
+
+    if st.button("Confirm Metrics & Proceed →", type="primary"):
+        if not st.session_state.current_metrics:
+            st.error("Please select at least one metric.")
+        else:
+            st.session_state.metrics = st.session_state.current_metrics
+            st.session_state.metrics_confirmed = True
+            st.rerun()
 
 # ================================================================================
 # NEW Step 2: Define Campaign Profile for Comparison
@@ -74,33 +126,25 @@ elif not st.session_state.comparison_profile_complete:
     with st.form("campaign_profile_form"):
         st.subheader("Core Campaign Details")
         
-        # --- Based on the "Campaigns" table schema ---
         campaign_name = st.text_input("Campaign Name")
         objective = st.selectbox("Campaign Objective", ['Brand Awareness', 'Lead Generation', 'Sales', 'Audience Engagement'])
         
         c1, c2 = st.columns(2)
-        start_date = c1.date_input("Start Date")
-        end_date = c2.date_input("End Date")
+        start_date = c1.date_input("Start Date", value=datetime.now())
+        end_date = c2.date_input("End Date", value=datetime.now() + pd.Timedelta(days=30))
         total_budget = st.number_input("Total Budget ($)", min_value=0, format="%d")
 
         st.markdown("---")
-
-        # --- Based on the "Audiences" table schema ---
         st.subheader("Target Audience")
         audience_name = st.selectbox("Primary Target Audience", ['US Tech Decision Makers', 'UK SMB Owners', 'Global Gaming Enthusiasts (18-25)'])
         
         st.markdown("---")
-
-        # --- Based on the "Creatives" table schema ---
         st.subheader("Primary Creative Types")
         creative_types = st.multiselect("Select the primary creative types used:", ['Video Ad', 'Image Ad', 'Text Ad', 'Email Template', 'Live Stream'])
         
         st.markdown("---")
-        
-        # --- Based on the "Channels" and "Campaign_Channels" schema ---
         st.subheader("Channel Mix & Budget Allocation")
         
-        # Use a callback to update the selected channels for dynamic budget allocation fields
         def update_channels():
             st.session_state.selected_channels = st.session_state.channel_multiselect
 
@@ -114,17 +158,14 @@ elif not st.session_state.comparison_profile_complete:
             default=st.session_state.selected_channels
         )
 
-        # Dynamically create budget allocation fields for selected channels
         channel_budgets = {}
         if st.session_state.selected_channels:
             st.write("Enter the budget allocated to each selected channel:")
             for channel in st.session_state.selected_channels:
-                # Use a key that is unique to the channel
                 channel_budgets[channel] = st.number_input(f"Budget for {channel} ($)", min_value=0, key=f"budget_{channel}", format="%d")
 
         submitted = st.form_submit_button("Save Profile & Find Comparable Campaigns", type="primary")
         if submitted:
-            # On submission, save the entire profile to session state
             st.session_state.campaign_profile = {
                 "CampaignName": campaign_name,
                 "Objective": objective,
@@ -133,13 +174,11 @@ elif not st.session_state.comparison_profile_complete:
                 "TotalBudget": total_budget,
                 "TargetAudience": audience_name,
                 "CreativeTypes": creative_types,
-                "Channels": channel_budgets # This now contains both channel name and budget
+                "Channels": channel_budgets
             }
             st.session_state.comparison_profile_complete = True
             st.rerun()
 
-# This block executes after the profile is submitted to show the user what was saved
-# and to simulate finding comparable campaigns.
 elif st.session_state.comparison_profile_complete and not st.session_state.benchmark_flow_complete:
     st.header("Step 2: Campaign Profile Saved")
     st.success("Your campaign profile has been successfully saved.")
@@ -151,10 +190,6 @@ elif st.session_state.comparison_profile_complete and not st.session_state.bench
     st.subheader("Comparable Historical Campaigns")
     st.info("Based on your profile, here are the most relevant historical campaigns. The benchmarks in the next step will be calculated from the average performance of this set.")
     
-    # This is a placeholder for where the app would display the results of the database query
-    # In a real app, this DataFrame would be generated by a backend function that queries
-    # the historical database based on the st.session_state.campaign_profile
-    
     comparable_campaigns_data = {
         'Historical Campaign': ['Q4 2023 - Project Titan', 'Summer 2023 - Ignite', 'Q1 2024 - Nova Launch'],
         'Similarity Score': ['92%', '88%', '85%'],
@@ -162,7 +197,7 @@ elif st.session_state.comparison_profile_complete and not st.session_state.bench
         'Total Budget': ['$1,100,000', '$950,000', '$1,250,000'],
         'Target Audience': [st.session_state.campaign_profile['TargetAudience']] * 3,
     }
-    st.dataframe(pd.DataFrame(comparable_campaigns_data), use_container_width=True)
+    st.dataframe(pd.DataFrame(comparable_campaigns_data), use_container_width=True, hide_index=True)
 
     if st.button("Proceed to Benchmarking →", type="primary"):
         st.session_state.benchmark_flow_complete = True
@@ -174,17 +209,15 @@ elif st.session_state.comparison_profile_complete and not st.session_state.bench
 elif not st.session_state.benchmark_flow_complete:
      st.header("Step 3: Auto-Generate Benchmarks")
      st.info("These proposed benchmarks are calculated from the average performance of the comparable campaigns identified in the previous step.")
-     # ... UI for showing and confirming benchmarks would go here ...
-     # This step is now simplified as the context is clear.
+     
      if st.button("Proceed to Scorecard Creation →", type="primary"):
-            st.session_state.benchmark_flow_complete = True # We are skipping the detailed historical entry for now
+            st.session_state.benchmark_flow_complete = True
             st.rerun()
 
 # ================================================================================
 # Step 4 & 5 - Main App Logic (Largely unchanged)
 # ================================================================================
 else:
-    # ... The rest of the app (Steps 4 and 5) remains the same ...
     app_config = {
         'openai_api_key': st.session_state.openai_api_key, 
         'metrics': st.session_state.metrics,
@@ -193,13 +226,10 @@ else:
     }
     
     st.header("Step 4: Build & Save Scorecard Moments")
-    # ... The rest of the application code ...
-    
     if st.session_state.sheets_dict is None:
         st.session_state.sheets_dict = process_scorecard_data(app_config)
 
     st.info("Fill in the 'Actuals' and 'Benchmark' columns, give the scorecard a name, and save it as a 'moment'. You can create multiple moments.")
-    
     current_scorecard_df = next(iter(st.session_state.sheets_dict.values()), None)
 
     if current_scorecard_df is not None:
@@ -233,7 +263,6 @@ else:
                 st.dataframe(df, use_container_width=True)
         st.session_state.show_ppt_creator = True
 
-    # --- Step 5: Create Presentation ---
     if st.session_state.get('show_ppt_creator'):
         st.markdown("---")
         st.header("Step 5: Create Presentation")
@@ -269,7 +298,7 @@ else:
                         style_guide = STYLE_PRESETS[selected_style_name]
                         ppt_buffer = create_presentation(
                             title=ppt_title,
-                            subtitle=ppt_subtitle,
+                            subtitle=subtitle_text,
                             scorecard_moments=selected_moments,
                             sheets_dict=presentation_data,
                             style_guide=style_guide,
