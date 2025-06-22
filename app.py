@@ -1,3 +1,6 @@
+import requests
+import json
+from pptx import Presentation
 import streamlit as st
 from io import BytesIO
 from datetime import datetime
@@ -17,6 +20,66 @@ from excel import create_excel_workbook
 # ================================================================================
 # WORLD-CLASS PREDICTION ENGINE
 # ================================================================================
+def extract_text_from_ppt(uploaded_file):
+    """Extracts all text from an uploaded .pptx file."""
+    try:
+        prs = Presentation(uploaded_file)
+        text_runs = []
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if not shape.has_text_frame:
+                    continue
+                for paragraph in shape.text_frame.paragraphs:
+                    for run in paragraph.runs:
+                        text_runs.append(run.text)
+        return "\n".join(text_runs)
+    except Exception as e:
+        st.error(f"Error reading PowerPoint file: {e}")
+        return ""
+
+def get_creator_data_from_text(text, api_key):
+    """Uses OpenAI API to extract structured creator data from text."""
+    if not api_key:
+        st.error("OpenAI API key is required for this feature.")
+        return None
+
+    prompt = f"""
+    You are an expert marketing analyst. Your task is to read the following text extracted from a campaign planning presentation and identify all the influencer/creator activations mentioned.
+    For each creator, extract their handle, platform, follower count, and saturation level.
+    For each post by that creator, extract the format, cost, historical reach for that format, historical engagement rate for that format, any paid amplification budget, whether it's new content, and the CTA type.
+    Return the data as a single JSON object with a single key "creators" which is a list of creator objects.
+
+    Here is the text:
+    ---
+    {text}
+    ---
+
+    Respond ONLY with the JSON object. Example format:
+    {{
+      "creators": [
+        {{
+          "handle": "creator_a",
+          "platform": "Instagram",
+          "follower_count": 150000,
+          "saturation": "Medium",
+          "posts": [
+            {{ "format": "Reel", "cost": 2500, "historical_reach_for_format": 80000, "historical_er_for_format": 4.5, "paid_amplification": 500, "is_new_content": true, "cta_type": "Hard CTA" }}
+          ]
+        }}
+      ]
+    }}
+    """
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload = {"model": "gpt-4-turbo", "messages": [{"role": "user", "content": prompt}], "response_format": {"type": "json_object"}, "temperature": 0.1}
+
+    try:
+        api_url = "https://api.openai.com/v1/chat/completions"
+        response = requests.post(api_url, headers=headers, json=payload, timeout=45)
+        response.raise_for_status()
+        return json.loads(response.json()['choices'][0]['message']['content'])
+    except Exception as e:
+        st.error(f"AI data extraction failed: {e}")
+        return None
 def calculate_predictions_advanced(creators):
     """
     Calculates predicted reach and depth using a multi-factor model that accounts
@@ -199,15 +262,36 @@ elif not st.session_state.metrics_confirmed:
 # NEW ADVANCED Step 2: Define Campaign Profile for Comparison
 # ================================================================================
 elif not st.session_state.comparison_profile_complete:
-    st.header("Step 2: Define Campaign Profile & Predictive Forecast")
-    
+    st.header("Step 2: Define Campaign Profile for Comparison")
+
+    # --- NEW: AI-Powered Auto-Population Section ---
+    with st.expander("🚀 Auto-Populate from Presentation"):
+        st.info("Upload a .pptx file containing your campaign plan. The AI will attempt to extract creator details and populate the form below.")
+        uploaded_file = st.file_uploader("Choose a PowerPoint file", type="pptx")
+
+        if st.button("Analyze Presentation and Populate Form"):
+            if uploaded_file is not None and st.session_state.openai_api_key:
+                with st.spinner("Reading presentation and contacting OpenAI..."):
+                    extracted_text = extract_text_from_ppt(uploaded_file)
+                    if extracted_text:
+                        ai_data = get_creator_data_from_text(extracted_text, st.session_state.openai_api_key)
+                        if ai_data and "creators" in ai_data:
+                            st.session_state.creators = ai_data["creators"]
+                            st.success("Successfully populated creator data from presentation!")
+                            st.rerun()
+                        else:
+                            st.error("AI could not extract valid creator data. Please check the presentation content or enter details manually.")
+            else:
+                st.warning("Please upload a file and ensure your OpenAI API key is entered.")
+
     with st.form("campaign_profile_form"):
         st.subheader("Core Campaign Details")
         campaign_name = st.text_input("Campaign Name", "Q4 Product Launch")
         total_budget = st.number_input("Total Budget ($)", min_value=1, format="%d", value=250000)
-        
+
         st.markdown("---")
         st.subheader("Live Predictive Summary")
+        # This function needs to be defined at the top of your file
         _, total_reach, total_engagement = calculate_predictions_advanced(st.session_state.creators)
         total_creator_cost = sum(post.get('cost', 0) for creator in st.session_state.creators for post in creator.get('posts', []))
         c1, c2, c3 = st.columns(3)
@@ -222,38 +306,37 @@ elif not st.session_state.comparison_profile_complete:
                 "CoreDetails": {"CampaignName": campaign_name, "TotalBudget": total_budget},
                 "InfluencerStrategy": {"CreatorList": final_creators, "TotalPredictedReach": total_reach, "TotalWeightedEngagement": total_engagement}
             }
-            # Set the flag to move to the next step in the original workflow
             st.session_state.comparison_profile_complete = True
             st.rerun()
 
-    # UI for managing creators and posts (OUTSIDE the form)
+    # --- UI for managing creators and posts (OUTSIDE the form) ---
     st.markdown("---")
     st.subheader("Define Creator Activations")
     for i, creator in enumerate(st.session_state.creators):
         with st.expander(f"Creator {i+1}: {creator.get('handle', 'New Creator')}", expanded=True):
             creator['handle'] = st.text_input("Handle", value=creator.get('handle', ''), key=f"handle_{i}")
             c1, c2, c3 = st.columns(3)
-            creator['platform'] = c1.selectbox("Platform", ["Instagram", "TikTok", "YouTube"], key=f"platform_{i}")
-            creator['follower_count'] = c2.number_input("Followers", min_value=0, format="%d", key=f"followers_{i}")
-            creator['saturation'] = c3.selectbox("Creator Saturation", ["Low", "Medium", "High"], help="How frequently does this creator post sponsored content?", key=f"saturation_{i}")
+            creator['platform'] = c1.selectbox("Platform", ["Instagram", "TikTok", "YouTube"], index=["Instagram", "TikTok", "YouTube"].index(creator.get('platform', 'Instagram')), key=f"platform_{i}")
+            creator['follower_count'] = c2.number_input("Followers", min_value=0, value=creator.get('follower_count',0), format="%d", key=f"followers_{i}")
+            creator['saturation'] = c3.selectbox("Creator Saturation", ["Low", "Medium", "High"], index=["Low", "Medium", "High"].index(creator.get('saturation', 'Low')), help="How frequently does this creator post sponsored content?", key=f"saturation_{i}")
 
             st.markdown("**Creator Posts:**")
             for j, post in enumerate(creator.get('posts', [])):
                 st.markdown(f"**Post {j+1}**")
                 p1, p2, p3 = st.columns(3)
-                post['format'] = p1.selectbox("Format", ['Reel', 'Story', 'Static Post', 'Long-form Video'], key=f"post_format_{i}_{j}")
-                post['cost'] = p2.number_input("Cost ($)", min_value=0, format="%d", key=f"post_cost_{i}_{j}")
-                post['paid_amplification'] = p3.number_input("Paid Amplification ($)", min_value=0, format="%d", key=f"paid_{i}_{j}")
-                
+                post['format'] = p1.selectbox("Format", ['Reel', 'Story', 'Static Post', 'Long-form Video'], index=['Reel', 'Story', 'Static Post', 'Long-form Video'].index(post.get('format', 'Reel')), key=f"post_format_{i}_{j}")
+                post['cost'] = p2.number_input("Cost ($)", min_value=0, value=post.get('cost',0), format="%d", key=f"post_cost_{i}_{j}")
+                post['paid_amplification'] = p3.number_input("Paid Amplification ($)", min_value=0, value=post.get('paid_amplification',0), format="%d", key=f"paid_{i}_{j}")
+
                 p4, p5, p6 = st.columns(3)
-                post['historical_reach_for_format'] = p4.number_input("Historical Reach for this Format", min_value=0, format="%d", key=f"post_hist_reach_{i}_{j}")
-                post['historical_er_for_format'] = p5.number_input("Historical ER for this Format (%)", format="%.2f", key=f"post_hist_er_{i}_{j}")
-                post['cta_type'] = p6.selectbox("CTA Type", ["Soft CTA", "Hard CTA"], help="A 'Hard CTA' may slightly lower organic engagement.", key=f"cta_{i}_{j}")
-                
-                post['is_new_content'] = st.toggle("First-Use Content", value=True, key=f"new_{i}_{j}")
-                
+                post['historical_reach_for_format'] = p4.number_input("Historical Reach for this Format", min_value=0, value=post.get('historical_reach_for_format',0), format="%d", key=f"post_hist_reach_{i}_{j}")
+                post['historical_er_for_format'] = p5.number_input("Historical ER for this Format (%)", value=post.get('historical_er_for_format',0.0), format="%.2f", key=f"post_hist_er_{i}_{j}")
+                post['cta_type'] = p6.selectbox("CTA Type", ["Soft CTA", "Hard CTA"], index=["Soft CTA", "Hard CTA"].index(post.get('cta_type', 'Soft CTA')), help="A 'Hard CTA' may slightly lower organic engagement.", key=f"cta_{i}_{j}")
+
+                post['is_new_content'] = st.toggle("First-Use Content", value=post.get('is_new_content', True), key=f"new_{i}_{j}")
+
                 st.markdown("---")
-                temp_data = {'follower_count': creator.get('follower_count', 1), 'saturation': creator['saturation'], 'posts': [post], 'platform': creator['platform']}
+                temp_data = {'saturation': creator['saturation'], 'posts': [post], 'platform': creator['platform']}
                 _, post_reach, post_wes = calculate_predictions_advanced([temp_data])
                 pr1, pr2 = st.columns(2)
                 pr1.metric("Predicted Post Reach", f"{post_reach:,.0f}")
@@ -262,7 +345,7 @@ elif not st.session_state.comparison_profile_complete:
                 if st.button("Remove Post", key=f"remove_post_{i}_{j}"):
                     st.session_state.creators[i]['posts'].pop(j)
                     st.rerun()
-            
+
             if st.button("Add Post", key=f"add_post_{i}"):
                 if 'posts' not in st.session_state.creators[i]: st.session_state.creators[i]['posts'] = []
                 st.session_state.creators[i]['posts'].append({})
