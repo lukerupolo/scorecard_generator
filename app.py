@@ -4,6 +4,7 @@ from datetime import datetime
 import pandas as pd
 
 # --- Local Imports from our other files ---
+# Assuming these files exist and are correct from your project setup
 from style import STYLE_PRESETS
 from ui import render_sidebar
 from data_processing import process_scorecard_data, calculate_all_benchmarks, get_ai_metric_categories
@@ -15,10 +16,11 @@ from excel import create_excel_workbook
 # ================================================================================
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
-APP_VERSION = "5.0.1" # Patch version for form callback fix
+APP_VERSION = "5.0.2" # Patch version for adding influencer section
 
 if 'app_version' not in st.session_state or st.session_state.app_version != APP_VERSION:
     api_key = st.session_state.get('openai_api_key')
+    # Clear all state to ensure a clean start with the new structure
     for key in list(st.session_state.keys()):
         del st.session_state[key]
 
@@ -38,6 +40,9 @@ if 'app_version' not in st.session_state or st.session_state.app_version != APP_
     st.session_state.avg_actuals = {}
     st.session_state.saved_moments = {}
     st.session_state.campaign_profile = {}
+    # NEW: Initialize state for influencers
+    if 'influencers' not in st.session_state:
+        st.session_state.influencers = []
 
 
 st.title("Event Marketing Scorecard & Presentation Generator")
@@ -120,6 +125,33 @@ elif not st.session_state.comparison_profile_complete:
     st.header("Step 2: Define Campaign Profile for Comparison")
     st.info("Provide the details of your campaign. This profile will be used to find the most similar historical campaigns to generate relevant benchmarks.")
 
+    # --- Influencer management moved outside the form to prevent callback errors ---
+    st.subheader("Influencer Allocation")
+    st.write("Add or remove influencers for this campaign. The data you enter below will be saved when you submit the main form.")
+    
+    for i, influencer in enumerate(st.session_state.influencers):
+        st.markdown(f"--- \n ##### Influencer {i+1}")
+        # These are now regular widgets, their values will be read from session state inside the form
+        influencer['name'] = st.text_input("Influencer Name", value=influencer.get('name', ''), key=f"inf_name_{i}")
+        
+        c1, c2, c3, c4 = st.columns(4)
+        influencer['platform'] = c1.selectbox("Platform", ["Instagram", "YouTube", "TikTok"], index=0, key=f"inf_platform_{i}")
+        influencer['follower_count'] = c2.number_input("Followers", min_value=0, value=influencer.get('follower_count', 10000), format="%d", key=f"inf_followers_{i}")
+        influencer['niche'] = c3.selectbox("Niche", ["Gaming", "Fashion", "B2B Tech", "Lifestyle"], index=0, key=f"inf_niche_{i}")
+        influencer['compensation'] = c4.number_input("Compensation ($)", min_value=0, value=influencer.get('compensation', 500), format="%d", key=f"inf_comp_{i}")
+
+    col1, col2 = st.columns([1,5])
+    if col1.button("Add Influencer"):
+        st.session_state.influencers.append({})
+        st.rerun()
+    if col2.button("Remove Last Influencer"):
+        if st.session_state.influencers:
+            st.session_state.influencers.pop()
+            st.rerun()
+
+    st.markdown("---")
+
+    # --- Main Form for all other campaign details ---
     with st.form("campaign_profile_form"):
         st.subheader("Core Campaign Details")
         
@@ -144,22 +176,20 @@ elif not st.session_state.comparison_profile_complete:
         
         all_channels = ['Facebook Ads', 'Google Search', 'Email Marketing', 'LinkedIn Ads', 'TikTok Ads', 'Organic Social', 'Influencer Marketing']
         
-        # REMOVED the on_change callback to prevent the error
         selected_channels = st.multiselect(
             "Select all channels used in this campaign:",
             options=all_channels
         )
 
-        # Instead of dynamically creating fields, we show all and let the user fill them in
         with st.expander("Enter Budget for Selected Channels"):
             st.info("Please enter a budget only for the channels you selected above.")
             channel_budgets_inputs = {}
             for channel in all_channels:
                 channel_budgets_inputs[channel] = st.number_input(f"Budget for {channel} ($)", min_value=0, key=f"budget_{channel}", format="%d")
 
+        # The final submit button for the entire profile
         submitted = st.form_submit_button("Save Profile & Find Comparable Campaigns", type="primary")
         if submitted:
-            # On submission, we filter the budgets to only include those for selected channels
             final_channel_budgets = {
                 channel: budget for channel, budget in channel_budgets_inputs.items()
                 if channel in selected_channels and budget > 0
@@ -173,7 +203,9 @@ elif not st.session_state.comparison_profile_complete:
                 "TotalBudget": total_budget,
                 "TargetAudience": audience_name,
                 "CreativeTypes": creative_types,
-                "Channels": final_channel_budgets
+                "Channels": final_channel_budgets,
+                # ADDED: Influencer data is now saved from session state
+                "Influencers": st.session_state.influencers
             }
             st.session_state.comparison_profile_complete = True
             st.rerun()
@@ -206,10 +238,10 @@ elif st.session_state.comparison_profile_complete and not st.session_state.bench
 # Step 3: Optional Benchmark Calculation 
 # ================================================================================
 elif not st.session_state.benchmark_flow_complete:
-     st.header("Step 3: Auto-Generate Benchmarks")
-     st.info("This section is now placeholder. Benchmarks would be calculated from the campaigns found in Step 2.")
-     
-     if st.button("Proceed to Scorecard Creation →", type="primary"):
+    st.header("Step 3: Auto-Generate Benchmarks")
+    st.info("This section is now placeholder. Benchmarks would be calculated from the campaigns found in Step 2.")
+    
+    if st.button("Proceed to Scorecard Creation →", type="primary"):
             st.session_state.benchmark_flow_complete = True
             st.rerun()
 
@@ -257,7 +289,7 @@ else:
             with st.expander("View Benchmark Calculation Summary"):
                 st.dataframe(st.session_state.benchmark_df.set_index("Metric"), use_container_width=True)
         
-        for name, df in st.session_state.saved__moments.items():
+        for name, df in st.session_state.saved_moments.items():
             with st.expander(f"View Moment: {name}"):
                 st.dataframe(df, use_container_width=True)
         st.session_state.show_ppt_creator = True
@@ -278,7 +310,7 @@ else:
                     default=list(st.session_state.saved_moments.keys()))
             else:
                 st.warning("No scorecard moments saved yet. Please save at least one moment above.")
-                selected__moments = []
+                selected_moments = []
 
             col1, col2 = st.columns(2)
             selected_style_name = col1.radio("Select Style Preset:", options=list(STYLE_PRESETS.keys()), horizontal=True)
