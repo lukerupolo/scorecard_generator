@@ -16,7 +16,7 @@ from excel import create_excel_workbook
 # ================================================================================
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
-APP_VERSION = "5.0.4" # Reverting to the Strategic Influencer Profiling version
+APP_VERSION = "5.0.5" # Version for Spreadsheet-based Influencer Profiling
 
 if 'app_version' not in st.session_state or st.session_state.app_version != APP_VERSION:
     api_key = st.session_state.get('openai_api_key')
@@ -138,85 +138,65 @@ elif not st.session_state.comparison_profile_complete:
         creative_types = c2.multiselect("Primary Creative Types", ['Video Ad', 'Image Ad', 'Text Ad', 'Email Template', 'Live Stream'])
         
         st.markdown("---")
-        # --- NEW INFLUENCER STRATEGY SECTION ---
+        # --- NEW SPREADSHEET-STYLE INFLUENCER SECTION ---
         st.subheader("Influencer & Creator Strategy Profile")
-        
-        # 1.1 Financial Allocation & Scale
-        st.write("**1. Financial Allocation & Scale**")
-        creator_budget_percent = st.slider("% of Total Campaign Budget for Creators", 0, 100, 50)
-        creator_budget_abs = (creator_budget_percent / 100) * total_budget
-        st.info(f"Estimated Creator Budget: **${creator_budget_abs:,.0f}**")
-        
-        st.write("Compensation Model Mix (%)")
-        c1, c2, c3 = st.columns(3)
-        comp_flat = c1.number_input("% Flat Fee", 0, 100, 80, key="comp_flat")
-        comp_perf = c2.number_input("% Performance/Commission", 0, 100, 20, key="comp_perf")
-        comp_gifting = c3.number_input("% Gifting/Value-in-Kind", 0, 100, 0, key="comp_gifting")
-        
-        # 1.2. Creator Portfolio Mix
-        st.write("**2. Creator Portfolio Mix**")
-        st.write("Tier-Based Budget Allocation (%)")
-        c1, c2, c3, c4 = st.columns(4)
-        tier_mega = c1.number_input("% Mega (1M+)", 0, 100, 50, key="tier_mega")
-        tier_macro = c2.number_input("% Macro (250k-1M)", 0, 100, 30, key="tier_macro")
-        tier_mid = c3.number_input("% Mid (50k-250k)", 0, 100, 20, key="tier_mid")
-        tier_micro = c4.number_input("% Micro (<50k)", 0, 100, 0, key="tier_micro")
-        
-        creator_niche = st.radio("Creator Niche / Vertical", ["Primarily Endemic", "Primarily Non-Endemic", "A Mix of Both"], horizontal=True)
+        st.info("Use the table below to enter the details for each creator in your campaign. Add or remove rows as needed.")
 
-        # 1.3. Content & Activation Strategy
-        st.write("**3. Content & Activation Strategy**")
-        c1, c2 = st.columns(2)
-        primary_format = c1.selectbox("Primary Content Format", ["Short-form Video", "Long-form Video", "Static Images/Carousels", "Live Streams"])
-        primary_cta = c2.selectbox("Primary Call-to-Action (CTA)", ["Watch/View (Reach)", "Comment/Share (Depth)", "Click/Sign-up/Buy (Action)"])
+        # Create a sample DataFrame that matches the user's schema
+        initial_creator_df = pd.DataFrame([
+            {"handle": "creator_handle_1", "platform": "Instagram", "follower_count": 500000, "avg_engagement_rate_30d": 3.5, "niche_category": "Gaming", "brand_safety_risk_score": 0.1, "audience_authenticity_score": 0.95, "cost_per_post_usd": 5000},
+            {"handle": "creator_handle_2", "platform": "TikTok", "follower_count": 1200000, "avg_engagement_rate_30d": 5.2, "niche_category": "Fashion", "brand_safety_risk_score": 0.05, "audience_authenticity_score": 0.92, "cost_per_post_usd": 10000},
+        ])
+
+        # Use st.data_editor to create the spreadsheet-like interface
+        edited_creator_df = st.data_editor(
+            initial_creator_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "platform": st.column_config.SelectboxColumn(
+                    "Platform",
+                    options=["Instagram", "TikTok", "YouTube"],
+                    required=True,
+                ),
+                "niche_category": st.column_config.SelectboxColumn(
+                    "Niche",
+                    options=['Fashion', 'Gaming', 'Finance', 'Lifestyle', 'Tech'],
+                    required=True,
+                ),
+                "follower_count": st.column_config.NumberColumn("Followers", format="%d"),
+                "avg_engagement_rate_30d": st.column_config.NumberColumn("Engagement Rate (30d %)", format="%.2f"),
+                "brand_safety_risk_score": st.column_config.NumberColumn("Brand Safety Risk (0-1)", format="%.2f"),
+                "audience_authenticity_score": st.column_config.NumberColumn("Audience Authenticity (0-1)", format="%.2f"),
+                "cost_per_post_usd": st.column_config.NumberColumn("Cost per Post ($)", format="$%d"),
+            }
+        )
         
         # Final Submit
         submitted = st.form_submit_button("Save Profile & Find Comparable Campaigns", type="primary")
         if submitted:
-            # --- Validation ---
-            if (comp_flat + comp_perf + comp_gifting) != 100:
-                st.error("Error: Compensation Model Mix percentages must add up to 100.")
-            elif (tier_mega + tier_macro + tier_mid + tier_micro) != 100:
-                st.error("Error: Tier-Based Budget Allocation percentages must add up to 100.")
-            else:
-                st.session_state.campaign_profile = {
-                    "CoreDetails": {
-                        "CampaignName": campaign_name,
-                        "Objective": objective,
-                        "StartDate": str(start_date),
-                        "EndDate": str(end_date),
-                        "TotalBudget": total_budget,
-                    },
-                    "AudienceAndCreative": {
-                         "TargetAudience": audience_name,
-                         "CreativeTypes": creative_types,
-                    },
-                    "InfluencerStrategy": {
-                        "Financials": {
-                            "CreatorBudgetPercentage": creator_budget_percent,
-                            "CompensationMix": {
-                                "FlatFee": comp_flat,
-                                "Performance": comp_perf,
-                                "Gifting": comp_gifting
-                            }
-                        },
-                        "Portfolio": {
-                            "TierAllocation": {
-                                "Mega": tier_mega,
-                                "Macro": tier_macro,
-                                "Mid": tier_mid,
-                                "Micro": tier_micro
-                            },
-                            "CreatorNiche": creator_niche
-                        },
-                        "Activation": {
-                            "PrimaryContentFormat": primary_format,
-                            "PrimaryCTA": primary_cta
-                        }
-                    }
+            # Convert the DataFrame to a list of dictionaries for storage
+            influencer_list = edited_creator_df.to_dict('records')
+            
+            st.session_state.campaign_profile = {
+                "CoreDetails": {
+                    "CampaignName": campaign_name,
+                    "Objective": objective,
+                    "StartDate": str(start_date),
+                    "EndDate": str(end_date),
+                    "TotalBudget": total_budget,
+                },
+                "AudienceAndCreative": {
+                     "TargetAudience": audience_name,
+                     "CreativeTypes": creative_types,
+                },
+                # Store the detailed list of influencers
+                "InfluencerStrategy": {
+                    "CreatorList": influencer_list
                 }
-                st.session_state.comparison_profile_complete = True
-                st.rerun()
+            }
+            st.session_state.comparison_profile_complete = True
+            st.rerun()
 
 elif st.session_state.comparison_profile_complete and not st.session_state.benchmark_flow_complete:
     st.header("Step 2: Campaign Profile Saved")
@@ -235,7 +215,6 @@ elif st.session_state.comparison_profile_complete and not st.session_state.bench
         'Similarity Score': ['95%', '91%', '87%'],
         'Objective': [st.session_state.campaign_profile['CoreDetails'].get('Objective', 'N/A')] * 3,
         'Total Budget': ['$7.5M', '$8.0M', '$6.9M'],
-        'Creator Budget %': ['40%', '45%', '42%']
     }
     st.dataframe(pd.DataFrame(comparable_campaigns_data), use_container_width=True, hide_index=True)
 
