@@ -15,7 +15,7 @@ from excel import create_excel_workbook
 # ================================================================================
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
-APP_VERSION = "5.0.0" # Major version change for new comparison logic
+APP_VERSION = "5.0.1" # Patch version for form callback fix
 
 if 'app_version' not in st.session_state or st.session_state.app_version != APP_VERSION:
     api_key = st.session_state.get('openai_api_key')
@@ -38,8 +38,6 @@ if 'app_version' not in st.session_state or st.session_state.app_version != APP_
     st.session_state.avg_actuals = {}
     st.session_state.saved_moments = {}
     st.session_state.campaign_profile = {}
-    if 'selected_channels' not in st.session_state:
-        st.session_state.selected_channels = []
 
 
 st.title("Event Marketing Scorecard & Presentation Generator")
@@ -77,7 +75,6 @@ elif not st.session_state.metrics_confirmed:
         "Labs sign up click-through Web", "Sessions", "DAU", "Hours Watched (Streams)"
     ]
 
-    # Initialize current_metrics in session state if not present
     if 'current_metrics' not in st.session_state:
         st.session_state.current_metrics = ["Video views (Franchise)", "Social Impressions"]
 
@@ -145,27 +142,29 @@ elif not st.session_state.comparison_profile_complete:
         st.markdown("---")
         st.subheader("Channel Mix & Budget Allocation")
         
-        def update_channels():
-            st.session_state.selected_channels = st.session_state.channel_multiselect
-
         all_channels = ['Facebook Ads', 'Google Search', 'Email Marketing', 'LinkedIn Ads', 'TikTok Ads', 'Organic Social', 'Influencer Marketing']
         
-        st.multiselect(
+        # REMOVED the on_change callback to prevent the error
+        selected_channels = st.multiselect(
             "Select all channels used in this campaign:",
-            options=all_channels,
-            key="channel_multiselect",
-            on_change=update_channels,
-            default=st.session_state.selected_channels
+            options=all_channels
         )
 
-        channel_budgets = {}
-        if st.session_state.selected_channels:
-            st.write("Enter the budget allocated to each selected channel:")
-            for channel in st.session_state.selected_channels:
-                channel_budgets[channel] = st.number_input(f"Budget for {channel} ($)", min_value=0, key=f"budget_{channel}", format="%d")
+        # Instead of dynamically creating fields, we show all and let the user fill them in
+        with st.expander("Enter Budget for Selected Channels"):
+            st.info("Please enter a budget only for the channels you selected above.")
+            channel_budgets_inputs = {}
+            for channel in all_channels:
+                channel_budgets_inputs[channel] = st.number_input(f"Budget for {channel} ($)", min_value=0, key=f"budget_{channel}", format="%d")
 
         submitted = st.form_submit_button("Save Profile & Find Comparable Campaigns", type="primary")
         if submitted:
+            # On submission, we filter the budgets to only include those for selected channels
+            final_channel_budgets = {
+                channel: budget for channel, budget in channel_budgets_inputs.items()
+                if channel in selected_channels and budget > 0
+            }
+
             st.session_state.campaign_profile = {
                 "CampaignName": campaign_name,
                 "Objective": objective,
@@ -174,7 +173,7 @@ elif not st.session_state.comparison_profile_complete:
                 "TotalBudget": total_budget,
                 "TargetAudience": audience_name,
                 "CreativeTypes": creative_types,
-                "Channels": channel_budgets
+                "Channels": final_channel_budgets
             }
             st.session_state.comparison_profile_complete = True
             st.rerun()
@@ -193,9 +192,9 @@ elif st.session_state.comparison_profile_complete and not st.session_state.bench
     comparable_campaigns_data = {
         'Historical Campaign': ['Q4 2023 - Project Titan', 'Summer 2023 - Ignite', 'Q1 2024 - Nova Launch'],
         'Similarity Score': ['92%', '88%', '85%'],
-        'Objective': [st.session_state.campaign_profile['Objective']] * 3,
+        'Objective': [st.session_state.campaign_profile.get('Objective', 'N/A')] * 3,
         'Total Budget': ['$1,100,000', '$950,000', '$1,250,000'],
-        'Target Audience': [st.session_state.campaign_profile['TargetAudience']] * 3,
+        'Target Audience': [st.session_state.campaign_profile.get('TargetAudience', 'N/A')] * 3,
     }
     st.dataframe(pd.DataFrame(comparable_campaigns_data), use_container_width=True, hide_index=True)
 
@@ -204,18 +203,18 @@ elif st.session_state.comparison_profile_complete and not st.session_state.bench
         st.rerun()
 
 # ================================================================================
-# Step 3: Optional Benchmark Calculation (UI remains, logic context changes)
+# Step 3: Optional Benchmark Calculation 
 # ================================================================================
 elif not st.session_state.benchmark_flow_complete:
      st.header("Step 3: Auto-Generate Benchmarks")
-     st.info("These proposed benchmarks are calculated from the average performance of the comparable campaigns identified in the previous step.")
+     st.info("This section is now placeholder. Benchmarks would be calculated from the campaigns found in Step 2.")
      
      if st.button("Proceed to Scorecard Creation →", type="primary"):
             st.session_state.benchmark_flow_complete = True
             st.rerun()
 
 # ================================================================================
-# Step 4 & 5 - Main App Logic (Largely unchanged)
+# Step 4 & 5 - Main App Logic
 # ================================================================================
 else:
     app_config = {
@@ -226,7 +225,7 @@ else:
     }
     
     st.header("Step 4: Build & Save Scorecard Moments")
-    if st.session_state.sheets_dict is None:
+    if 'sheets_dict' not in st.session_state or st.session_state.sheets_dict is None:
         st.session_state.sheets_dict = process_scorecard_data(app_config)
 
     st.info("Fill in the 'Actuals' and 'Benchmark' columns, give the scorecard a name, and save it as a 'moment'. You can create multiple moments.")
@@ -254,11 +253,11 @@ else:
     if st.session_state.saved_moments:
         st.markdown("---")
         st.subheader("Saved Scorecard Moments")
-        if st.session_state.benchmark_df is not None and not st.session_state.benchmark_df.empty:
+        if 'benchmark_df' in st.session_state and st.session_state.benchmark_df is not None and not st.session_state.benchmark_df.empty:
             with st.expander("View Benchmark Calculation Summary"):
                 st.dataframe(st.session_state.benchmark_df.set_index("Metric"), use_container_width=True)
         
-        for name, df in st.session_state.saved_moments.items():
+        for name, df in st.session_state.saved__moments.items():
             with st.expander(f"View Moment: {name}"):
                 st.dataframe(df, use_container_width=True)
         st.session_state.show_ppt_creator = True
@@ -279,7 +278,7 @@ else:
                     default=list(st.session_state.saved_moments.keys()))
             else:
                 st.warning("No scorecard moments saved yet. Please save at least one moment above.")
-                selected_moments = []
+                selected__moments = []
 
             col1, col2 = st.columns(2)
             selected_style_name = col1.radio("Select Style Preset:", options=list(STYLE_PRESETS.keys()), horizontal=True)
@@ -298,7 +297,7 @@ else:
                         style_guide = STYLE_PRESETS[selected_style_name]
                         ppt_buffer = create_presentation(
                             title=ppt_title,
-                            subtitle=subtitle_text,
+                            subtitle=ppt_subtitle,
                             scorecard_moments=selected_moments,
                             sheets_dict=presentation_data,
                             style_guide=style_guide,
