@@ -16,11 +16,11 @@ from excel import create_excel_workbook
 # ================================================================================
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
-APP_VERSION = "5.0.2" # Patch version for adding influencer section
+APP_VERSION = "5.0.4" # Version for Strategic Influencer Profiling
 
 if 'app_version' not in st.session_state or st.session_state.app_version != APP_VERSION:
     api_key = st.session_state.get('openai_api_key')
-    # Clear all state to ensure a clean start with the new structure
+    # Clear all state to ensure a clean start
     for key in list(st.session_state.keys()):
         del st.session_state[key]
 
@@ -40,9 +40,6 @@ if 'app_version' not in st.session_state or st.session_state.app_version != APP_
     st.session_state.avg_actuals = {}
     st.session_state.saved_moments = {}
     st.session_state.campaign_profile = {}
-    # NEW: Initialize state for influencers
-    if 'influencers' not in st.session_state:
-        st.session_state.influencers = []
 
 
 st.title("Event Marketing Scorecard & Presentation Generator")
@@ -124,109 +121,121 @@ elif not st.session_state.metrics_confirmed:
 elif not st.session_state.comparison_profile_complete:
     st.header("Step 2: Define Campaign Profile for Comparison")
     st.info("Provide the details of your campaign. This profile will be used to find the most similar historical campaigns to generate relevant benchmarks.")
-
-    # --- Influencer management moved outside the form to prevent callback errors ---
-    st.subheader("Influencer Allocation")
-    st.write("Add or remove influencers for this campaign. The data you enter below will be saved when you submit the main form.")
     
-    for i, influencer in enumerate(st.session_state.influencers):
-        st.markdown(f"--- \n ##### Influencer {i+1}")
-        # These are now regular widgets, their values will be read from session state inside the form
-        influencer['name'] = st.text_input("Influencer Name", value=influencer.get('name', ''), key=f"inf_name_{i}")
-        
-        c1, c2, c3, c4 = st.columns(4)
-        influencer['platform'] = c1.selectbox("Platform", ["Instagram", "YouTube", "TikTok"], index=0, key=f"inf_platform_{i}")
-        influencer['follower_count'] = c2.number_input("Followers", min_value=0, value=influencer.get('follower_count', 10000), format="%d", key=f"inf_followers_{i}")
-        influencer['niche'] = c3.selectbox("Niche", ["Gaming", "Fashion", "B2B Tech", "Lifestyle"], index=0, key=f"inf_niche_{i}")
-        influencer['compensation'] = c4.number_input("Compensation ($)", min_value=0, value=influencer.get('compensation', 500), format="%d", key=f"inf_comp_{i}")
-
-    col1, col2 = st.columns([1,5])
-    if col1.button("Add Influencer"):
-        st.session_state.influencers.append({})
-        st.rerun()
-    if col2.button("Remove Last Influencer"):
-        if st.session_state.influencers:
-            st.session_state.influencers.pop()
-            st.rerun()
-
-    st.markdown("---")
-
-    # --- Main Form for all other campaign details ---
     with st.form("campaign_profile_form"):
         st.subheader("Core Campaign Details")
-        
         campaign_name = st.text_input("Campaign Name")
         objective = st.selectbox("Campaign Objective", ['Brand Awareness', 'Lead Generation', 'Sales', 'Audience Engagement'])
-        
         c1, c2 = st.columns(2)
         start_date = c1.date_input("Start Date", value=datetime.now())
         end_date = c2.date_input("End Date", value=datetime.now() + pd.Timedelta(days=30))
-        total_budget = st.number_input("Total Budget ($)", min_value=0, format="%d")
+        total_budget = st.number_input("Total Budget ($)", min_value=1, format="%d", value=100000)
 
         st.markdown("---")
-        st.subheader("Target Audience")
-        audience_name = st.selectbox("Primary Target Audience", ['US Tech Decision Makers', 'UK SMB Owners', 'Global Gaming Enthusiasts (18-25)'])
+        st.subheader("Target Audience & Creatives")
+        c1, c2 = st.columns(2)
+        audience_name = c1.selectbox("Primary Target Audience", ['US Tech Decision Makers', 'UK SMB Owners', 'Global Gaming Enthusiasts (18-25)'])
+        creative_types = c2.multiselect("Primary Creative Types", ['Video Ad', 'Image Ad', 'Text Ad', 'Email Template', 'Live Stream'])
         
         st.markdown("---")
-        st.subheader("Primary Creative Types")
-        creative_types = st.multiselect("Select the primary creative types used:", ['Video Ad', 'Image Ad', 'Text Ad', 'Email Template', 'Live Stream'])
+        # --- NEW INFLUENCER STRATEGY SECTION ---
+        st.subheader("Influencer & Creator Strategy Profile")
         
-        st.markdown("---")
-        st.subheader("Channel Mix & Budget Allocation")
+        # 1.1 Financial Allocation & Scale
+        st.write("**1. Financial Allocation & Scale**")
+        creator_budget_percent = st.slider("% of Total Campaign Budget for Creators", 0, 100, 50)
+        creator_budget_abs = (creator_budget_percent / 100) * total_budget
+        st.info(f"Estimated Creator Budget: **${creator_budget_abs:,.0f}**")
         
-        all_channels = ['Facebook Ads', 'Google Search', 'Email Marketing', 'LinkedIn Ads', 'TikTok Ads', 'Organic Social', 'Influencer Marketing']
+        st.write("Compensation Model Mix (%)")
+        c1, c2, c3 = st.columns(3)
+        comp_flat = c1.number_input("% Flat Fee", 0, 100, 80, key="comp_flat")
+        comp_perf = c2.number_input("% Performance/Commission", 0, 100, 20, key="comp_perf")
+        comp_gifting = c3.number_input("% Gifting/Value-in-Kind", 0, 100, 0, key="comp_gifting")
         
-        selected_channels = st.multiselect(
-            "Select all channels used in this campaign:",
-            options=all_channels
-        )
+        # 1.2. Creator Portfolio Mix
+        st.write("**2. Creator Portfolio Mix**")
+        st.write("Tier-Based Budget Allocation (%)")
+        c1, c2, c3, c4 = st.columns(4)
+        tier_mega = c1.number_input("% Mega (1M+)", 0, 100, 50, key="tier_mega")
+        tier_macro = c2.number_input("% Macro (250k-1M)", 0, 100, 30, key="tier_macro")
+        tier_mid = c3.number_input("% Mid (50k-250k)", 0, 100, 20, key="tier_mid")
+        tier_micro = c4.number_input("% Micro (<50k)", 0, 100, 0, key="tier_micro")
+        
+        creator_niche = st.radio("Creator Niche / Vertical", ["Primarily Endemic", "Primarily Non-Endemic", "A Mix of Both"], horizontal=True)
 
-        with st.expander("Enter Budget for Selected Channels"):
-            st.info("Please enter a budget only for the channels you selected above.")
-            channel_budgets_inputs = {}
-            for channel in all_channels:
-                channel_budgets_inputs[channel] = st.number_input(f"Budget for {channel} ($)", min_value=0, key=f"budget_{channel}", format="%d")
-
-        # The final submit button for the entire profile
+        # 1.3. Content & Activation Strategy
+        st.write("**3. Content & Activation Strategy**")
+        c1, c2 = st.columns(2)
+        primary_format = c1.selectbox("Primary Content Format", ["Short-form Video", "Long-form Video", "Static Images/Carousels", "Live Streams"])
+        primary_cta = c2.selectbox("Primary Call-to-Action (CTA)", ["Watch/View (Reach)", "Comment/Share (Depth)", "Click/Sign-up/Buy (Action)"])
+        
+        # Final Submit
         submitted = st.form_submit_button("Save Profile & Find Comparable Campaigns", type="primary")
         if submitted:
-            final_channel_budgets = {
-                channel: budget for channel, budget in channel_budgets_inputs.items()
-                if channel in selected_channels and budget > 0
-            }
-
-            st.session_state.campaign_profile = {
-                "CampaignName": campaign_name,
-                "Objective": objective,
-                "StartDate": str(start_date),
-                "EndDate": str(end_date),
-                "TotalBudget": total_budget,
-                "TargetAudience": audience_name,
-                "CreativeTypes": creative_types,
-                "Channels": final_channel_budgets,
-                # ADDED: Influencer data is now saved from session state
-                "Influencers": st.session_state.influencers
-            }
-            st.session_state.comparison_profile_complete = True
-            st.rerun()
+            # --- Validation ---
+            if (comp_flat + comp_perf + comp_gifting) != 100:
+                st.error("Error: Compensation Model Mix percentages must add up to 100.")
+            elif (tier_mega + tier_macro + tier_mid + tier_micro) != 100:
+                st.error("Error: Tier-Based Budget Allocation percentages must add up to 100.")
+            else:
+                st.session_state.campaign_profile = {
+                    "CoreDetails": {
+                        "CampaignName": campaign_name,
+                        "Objective": objective,
+                        "StartDate": str(start_date),
+                        "EndDate": str(end_date),
+                        "TotalBudget": total_budget,
+                    },
+                    "AudienceAndCreative": {
+                         "TargetAudience": audience_name,
+                         "CreativeTypes": creative_types,
+                    },
+                    "InfluencerStrategy": {
+                        "Financials": {
+                            "CreatorBudgetPercentage": creator_budget_percent,
+                            "CompensationMix": {
+                                "FlatFee": comp_flat,
+                                "Performance": comp_perf,
+                                "Gifting": comp_gifting
+                            }
+                        },
+                        "Portfolio": {
+                            "TierAllocation": {
+                                "Mega": tier_mega,
+                                "Macro": tier_macro,
+                                "Mid": tier_mid,
+                                "Micro": tier_micro
+                            },
+                            "CreatorNiche": creator_niche
+                        },
+                        "Activation": {
+                            "PrimaryContentFormat": primary_format,
+                            "PrimaryCTA": primary_cta
+                        }
+                    }
+                }
+                st.session_state.comparison_profile_complete = True
+                st.rerun()
 
 elif st.session_state.comparison_profile_complete and not st.session_state.benchmark_flow_complete:
     st.header("Step 2: Campaign Profile Saved")
-    st.success("Your campaign profile has been successfully saved.")
+    st.success("Your campaign profile has been successfully saved. This detailed profile is now ready to be matched against the historical database.")
     
-    st.subheader("Your Saved Profile")
-    st.json(st.session_state.campaign_profile)
+    st.subheader("Your Saved Influencer Strategy Profile")
+    st.json(st.session_state.campaign_profile.get("InfluencerStrategy", {}))
 
     st.markdown("---")
     st.subheader("Comparable Historical Campaigns")
-    st.info("Based on your profile, here are the most relevant historical campaigns. The benchmarks in the next step will be calculated from the average performance of this set.")
+    st.info("Based on your detailed profile, here are the most relevant historical campaigns. The benchmarks in the next step will be calculated from the average performance of this set.")
     
+    # This data is now more meaningful because it's based on a more detailed profile
     comparable_campaigns_data = {
-        'Historical Campaign': ['Q4 2023 - Project Titan', 'Summer 2023 - Ignite', 'Q1 2024 - Nova Launch'],
-        'Similarity Score': ['92%', '88%', '85%'],
-        'Objective': [st.session_state.campaign_profile.get('Objective', 'N/A')] * 3,
-        'Total Budget': ['$1,100,000', '$950,000', '$1,250,000'],
-        'Target Audience': [st.session_state.campaign_profile.get('TargetAudience', 'N/A')] * 3,
+        'Historical Campaign': ['Q4 2023 - Project Titan', 'Q1 2024 - Nova Launch', 'Summer 2022 - Falcon'],
+        'Similarity Score': ['95%', '91%', '87%'],
+        'Objective': [st.session_state.campaign_profile['CoreDetails'].get('Objective', 'N/A')] * 3,
+        'Total Budget': ['$7.5M', '$8.0M', '$6.9M'],
+        'Creator Budget %': ['40%', '45%', '42%']
     }
     st.dataframe(pd.DataFrame(comparable_campaigns_data), use_container_width=True, hide_index=True)
 
@@ -268,8 +277,11 @@ else:
         
         edited_df['Actuals'] = pd.to_numeric(edited_df['Actuals'], errors='coerce')
         edited_df['Benchmark'] = pd.to_numeric(edited_df['Benchmark'], errors='coerce')
-        edited_df['% Difference'] = ((edited_df['Actuals'] - edited_df['Benchmark']) / edited_df['Benchmark'].replace(0, pd.NA)).apply(lambda x: f"{x:.1%}" if pd.notna(x) else None)
-        
+        if 'Benchmark' in edited_df.columns and edited_df['Benchmark'].notna().any():
+            edited_df['% Difference'] = ((edited_df['Actuals'] - edited_df['Benchmark']) / edited_df['Benchmark'].replace(0, pd.NA)).apply(lambda x: f"{x:.1%}" if pd.notna(x) else None)
+        else:
+            edited_df['% Difference'] = None
+
         col1, col2 = st.columns([3, 1])
         moment_name = col1.text_input("Name for this Scorecard Moment", placeholder="e.g., Pre-Reveal, Launch Week")
         
@@ -309,8 +321,8 @@ else:
                     options=list(st.session_state.saved_moments.keys()),
                     default=list(st.session_state.saved_moments.keys()))
             else:
-                st.warning("No scorecard moments saved yet. Please save at least one moment above.")
                 selected_moments = []
+                st.warning("No scorecard moments saved yet. Please save at least one moment above.")
 
             col1, col2 = st.columns(2)
             selected_style_name = col1.radio("Select Style Preset:", options=list(STYLE_PRESETS.keys()), horizontal=True)
