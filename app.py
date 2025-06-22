@@ -30,7 +30,7 @@ def get_influencer_tier(followers):
 # ================================================================================
 st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
 
-APP_VERSION = "5.0.6" # Version for UI nesting fix
+APP_VERSION = "5.0.8" # Version for CAP Scorecard Integration
 
 if 'app_version' not in st.session_state or st.session_state.app_version != APP_VERSION:
     api_key = st.session_state.get('openai_api_key')
@@ -137,114 +137,78 @@ elif not st.session_state.metrics_confirmed:
 # ================================================================================
 elif not st.session_state.comparison_profile_complete:
     st.header("Step 2: Define Campaign Profile for Comparison")
-    st.info("Provide the details of your campaign. This profile will be used to find the most similar historical campaigns to generate relevant benchmarks.")
+    st.info("Provide the details of your campaign. The profile you build will determine the benchmarks.")
     
+    # --- Main form for Core Details ---
     with st.form("campaign_profile_form"):
         st.subheader("Core Campaign Details")
         campaign_name = st.text_input("Campaign Name")
-        objective = st.selectbox("Campaign Objective", ['Brand Awareness', 'Lead Generation', 'Sales', 'Audience Engagement'])
+        # The Objective now controls the UI below
+        objective = st.selectbox("Campaign Objective", ['Reach', 'Depth', 'Action'])
         c1, c2 = st.columns(2)
         start_date = c1.date_input("Start Date", value=datetime.now())
         end_date = c2.date_input("End Date", value=datetime.now() + pd.Timedelta(days=30))
         total_budget = st.number_input("Total Budget ($)", min_value=1, format="%d", value=100000)
 
         st.markdown("---")
-        st.subheader("Target Audience & Creatives")
-        c1, c2 = st.columns(2)
-        audience_name = c1.selectbox("Primary Target Audience", ['US Tech Decision Makers', 'UK SMB Owners', 'Global Gaming Enthusiasts (18-25)'])
-        creative_types = c2.multiselect("Primary Creative Types", ['Video Ad', 'Image Ad', 'Text Ad', 'Email Template', 'Live Stream'])
         
-        st.markdown("---")
-        # --- Influencer section is now just a placeholder summary inside the form ---
+        # --- DYNAMIC INFLUENCER STRATEGY SECTION BASED ON CAP SCORECARD ---
         st.subheader("Influencer & Creator Strategy Profile")
-        if not st.session_state.creators:
-            st.warning("No creators added yet. Please define your activations in the section below the form.")
-        else:
-            st.success(f"{len(st.session_state.creators)} creator(s) defined. See details below the form.")
-            # Display a quick summary
-            total_creator_spend = sum(c.get('compensation', 0) for c in st.session_state.creators)
-            st.info(f"Total defined creator spend: **${total_creator_spend:,.0f}**")
+        st.info(f"Because your objective is **{objective}**, we'll focus on the most relevant strategic inputs.")
 
+        cap_scores = {}
+
+        # BUCKET 1: CREATOR & AUDIENCE AXIS
+        with st.expander("**Bucket 1: Creator & Audience Axis**", expanded=True):
+            cap_scores['audience_authenticity'] = st.slider("Estimated Audience Authenticity (%)", 0, 100, 85, help="Use tools like HypeAuditor or manual checks. Red Flag: < 85%.")
+            cap_scores['niche_relevance'] = st.radio("Creator Niche Relevance", ["Highly Relevant (Endemic)", "Somewhat Relevant", "Non-Endemic (Broad Appeal)"], index=0)
+            cap_scores['brand_safety_content'] = st.select_slider("Content Brand Safety Risk", ["Low", "Medium", "High"], value="Low", help="Scan for sensitive topics.")
+
+        # BUCKET 2: ACTIVATION BLUEPRINT
+        with st.expander("**Bucket 2: Activation Blueprint**", expanded=True):
+            if objective == 'Reach':
+                st.write("For a **Reach** objective, focus on scalable formats and clear, low-friction calls-to-action.")
+                cap_scores['activation_format'] = st.selectbox("Primary Activation Format", ["Short-form Video (TikTok, Reels)", "Static Images/Carousels", "Long-form Video (YouTube)", "Live Streams"])
+                cap_scores['cta_efficacy'] = st.selectbox("Primary Call-to-Action (CTA)", ["Watch/View", "Learn More", "Visit Profile"])
+            
+            elif objective == 'Depth':
+                st.write("For a **Depth** objective, focus on trust-building formats and community interaction.")
+                cap_scores['activation_format'] = st.selectbox("Primary Activation Format", ["Long-form Video (YouTube)", "Live Streams", "Community Q&A / AMA", "Detailed Carousels"])
+                cap_scores['cta_efficacy'] = st.selectbox("Primary Call-to-Action (CTA)", ["Comment/Share", "Join the Conversation", "Ask a Question"])
+                cap_scores['creative_control'] = st.radio("Creative Control Balance", ["Creator-Led (High Freedom)", "Collaborative", "Brand-Led (Prescriptive)"], index=1)
+
+            elif objective == 'Action':
+                st.write("For an **Action** objective, focus on high-intent formats and frictionless, trackable calls-to-action.")
+                cap_scores['activation_format'] = st.selectbox("Primary Activation Format", ["Product Demos / Tutorials", "Live Shopping Event", "Testimonials / Reviews"])
+                cap_scores['cta_efficacy'] = st.selectbox("Primary Call-to-Action (CTA)", ["Click Link in Bio (Tracked)", "Use Promo Code", "Sign Up / Download", "Shop Now"])
+                cap_scores['funnel_alignment'] = st.radio("Funnel Stage", ["Top-of-Funnel (TOFU)", "Middle-of-Funnel (MOFU)", "Bottom-of-Funnel (BOFU)"], index=2)
+
+        # BUCKET 3: ECOSYSTEM & ENVIRONMENT
+        with st.expander("**Bucket 3: Ecosystem & Environment**", expanded=True):
+            cap_scores['platform_objective_fit'] = st.selectbox("Primary Platform", ["TikTok", "Instagram", "YouTube", "Twitch", "LinkedIn"])
+            cap_scores['competitive_landscape'] = st.select_slider("Competitive Saturation (Share of Voice)", ["Low", "Medium", "High"], value="Medium")
 
         submitted = st.form_submit_button("Save Profile & Find Comparable Campaigns", type="primary")
         if submitted:
-            # --- Build the Influencer Strategy Profile from the state ---
-            total_creator_spend = sum(c.get('compensation', 0) for c in st.session_state.creators)
-            tier_spend = {"Mega": 0, "Macro": 0, "Mid": 0, "Micro": 0}
-            for c in st.session_state.creators:
-                tier = get_influencer_tier(c.get('follower_count', 0))
-                tier_spend[tier] += c.get('compensation', 0)
-
-            tier_allocation_percent = {
-                tier: (spend / total_creator_spend) * 100 if total_creator_spend > 0 else 0
-                for tier, spend in tier_spend.items()
-            }
-            
             st.session_state.campaign_profile = {
                 "CoreDetails": { "CampaignName": campaign_name, "Objective": objective, "TotalBudget": total_budget },
-                "AudienceAndCreative": { "TargetAudience": audience_name, "CreativeTypes": creative_types },
-                "InfluencerStrategy": {
-                    "RawCreatorList": st.session_state.creators,
-                    "CalculatedPortfolio": {
-                        "TotalCreatorSpend": total_creator_spend,
-                        "CreatorBudgetPercentage": (total_creator_spend / total_budget) * 100 if total_budget > 0 else 0,
-                        "TierAllocation": tier_allocation_percent
-                    }
-                }
+                "CAP_Scores": cap_scores
             }
             st.session_state.comparison_profile_complete = True
             st.rerun()
-
-    # --- Creator and Post management UI (OUTSIDE THE FORM but visually grouped) ---
-    st.markdown("---")
-    with st.expander("**Define Influencer Activations**", expanded=True):
-        st.info("Add each creator and define the content they will produce for this campaign.")
-        for i, creator in enumerate(st.session_state.creators):
-            with st.container(border=True):
-                st.markdown(f"##### Creator {i+1}")
-                creator['name'] = st.text_input("Name", value=creator.get('name', ''), key=f"name_{i}")
-                c1, c2 = st.columns(2)
-                creator['follower_count'] = c1.number_input("Followers", min_value=0, value=creator.get('follower_count', 0), format="%d", key=f"followers_{i}")
-                creator['compensation'] = c2.number_input("Compensation ($)", min_value=0, value=creator.get('compensation', 0), format="%d", key=f"comp_{i}")
-                
-                st.markdown("###### Content & Activation Strategy")
-                if 'posts' not in creator:
-                    creator['posts'] = []
-                
-                for j, post in enumerate(creator['posts']):
-                    pc1, pc2, pc3 = st.columns([2,2,1])
-                    post['format'] = pc1.selectbox("Content Format", ["Short-form Video", "Long-form Video", "Static Images/Carousels", "Live Streams"], key=f"format_{i}_{j}")
-                    post['cta'] = pc2.selectbox("Primary Call-to-Action (CTA)", ["Watch/View (Reach)", "Comment/Share (Depth)", "Click/Sign-up/Buy (Action)"], key=f"cta_{i}_{j}")
-                    if pc3.button("Remove Post", key=f"remove_post_{i}_{j}"):
-                        creator['posts'].pop(j)
-                        st.rerun()
-
-                if st.button("Add Post", key=f"add_post_{i}"):
-                    creator['posts'].append({})
-                    st.rerun()
-        
-        st.markdown("---")
-        c1, c2 = st.columns(2)
-        if c1.button("Add a New Creator"):
-            st.session_state.creators.append({})
-            st.rerun()
-        if c2.button("Remove Last Creator"):
-            if st.session_state.creators:
-                st.session_state.creators.pop()
-                st.rerun()
-
 
 elif st.session_state.comparison_profile_complete and not st.session_state.benchmark_flow_complete:
     st.header("Step 2: Campaign Profile Saved")
     st.success("Your campaign profile has been successfully saved.")
     
-    st.subheader("Your Saved Influencer Strategy Profile")
-    st.json(st.session_state.campaign_profile.get("InfluencerStrategy", {}))
+    st.subheader("Your Saved Creator Activation Potential (CAP) Profile")
+    st.json(st.session_state.campaign_profile)
 
     st.markdown("---")
     st.subheader("Comparable Historical Campaigns")
     st.info("Based on your detailed profile, here are the most relevant historical campaigns. The benchmarks in the next step will be calculated from the average performance of this set.")
     
+    # This data is now more meaningful because it's based on a more detailed profile
     comparable_campaigns_data = {
         'Historical Campaign': ['Q4 2023 - Project Titan', 'Q1 2024 - Nova Launch', 'Summer 2022 - Falcon'],
         'Similarity Score': ['95%', '91%', '87%'],
