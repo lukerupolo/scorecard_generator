@@ -1,499 +1,361 @@
-import requests
-import json
-from pptx import Presentation
 import streamlit as st
-from io import BytesIO
-from datetime import datetime
-import pandas as pd
-import requests
-import json
 from pptx import Presentation
+from pptx.util import Pt
+from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.dml.color import RGBColor
+import io
+import copy
+import uuid
+import openai
+import json
 
-# --- Local Imports from our other files ---
-# Assuming these files exist and are correct from your project setup
-from style import STYLE_PRESETS
-from ui import render_sidebar
-from data_processing import process_scorecard_data, calculate_all_benchmarks, get_ai_metric_categories
-from powerpoint import create_presentation
-from excel import create_excel_workbook
+# --- Core PowerPoint Functions ---
 
-# ================================================================================
-# WORLD-CLASS PREDICTION ENGINE
-# ================================================================================
-def extract_text_from_ppt(uploaded_file):
-    """Extracts all text from an uploaded .pptx file."""
-    try:
-        prs = Presentation(uploaded_file)
-        text_runs = []
-        for slide in prs.slides:
-            for shape in slide.shapes:
-                if not shape.has_text_frame:
-                    continue
-                for paragraph in shape.text_frame.paragraphs:
-                    for run in paragraph.runs:
-                        text_runs.append(run.text)
-        return "\n".join(text_runs)
-    except Exception as e:
-        st.error(f"Error reading PowerPoint file: {e}")
-        return ""
+def deep_copy_slide_content(dest_slide, src_slide):
+    """
+    Performs a stable deep copy of all shapes from a source slide to a
+    destination slide, handling different shape types robustly.
+    This approach aims to minimize repair issues by using python-pptx's API
+    for common shape types, especially images and text.
+    """
+    # Clear all shapes from the destination slide first to prepare it.
+    # This loop safely removes shapes by iterating on a copy of the shapes list.
+    for shape in list(dest_slide.shapes):
+        sp = shape.element
+        sp.getparent().remove(sp)
 
-def get_creator_data_from_text(text, api_key):
-    """Uses OpenAI API to extract structured creator data from text."""
+    for shape in src_slide.shapes:
+        left, top, width, height = shape.left, shape.top, shape.width, shape.height
+
+        if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+            # For pictures, extract the image data and re-add it using python-pptx's API.
+            # This is CRUCIAL for avoiding repair issues with images and ensuring proper embedding.
+            try:
+                image_bytes = shape.image.blob
+                dest_slide.shapes.add_picture(io.BytesIO(image_bytes), left, top, width, height)
+            except Exception as e:
+                # Log if an image cannot be copied, but continue with other shapes
+                print(f"Warning: Could not copy picture from source slide. Error: {e}")
+                # Fallback: if picture has a placeholder, try to copy its XML
+                if hasattr(shape, 'is_placeholder') and shape.is_placeholder:
+                    new_el = copy.deepcopy(shape.element)
+                    dest_slide.shapes._spTree.insert_element_before(new_el, 'p:extLst')
+                
+        elif shape.has_text_frame:
+            # Create a new text box on the destination slide with the same dimensions
+            new_shape = dest_slide.shapes.add_textbox(left, top, width, height)
+            new_text_frame = new_shape.text_frame
+            new_text_frame.clear() # Clear existing paragraphs to ensure a clean copy
+
+            # Copy text and formatting paragraph by paragraph, run by run
+            for paragraph in shape.text_frame.paragraphs:
+                new_paragraph = new_text_frame.add_paragraph()
+                # Copy paragraph properties (e.g., alignment, indentation)
+                new_paragraph.alignment = paragraph.alignment
+                if hasattr(paragraph, 'level'): # Bullet level
+                    new_paragraph.level = paragraph.level
+                
+                # Copy runs with their font properties
+                for run in paragraph.runs:
+                    new_run = new_paragraph.add_run()
+                    new_run.text = run.text
+                    
+                    # Copy essential font properties (bold, italic, underline, size)
+                    new_run.font.bold = run.font.bold
+                    new_run.font.italic = run.font.italic
+                    new_run.font.underline = run.font.underline
+                    if run.font.size: # Only copy if size is explicitly defined
+                        new_run.font.size = run.font.size
+                    
+                    # Copy font color if it's a solid fill RGB color
+                    if run.font.fill.type == 1: # MSO_FILL_TYPE.SOLID
+                        new_run.font.fill.solid()
+                        try:
+                            # Ensure color is an RGBColor object for direct assignment
+                            if isinstance(run.font.fill.fore_color.rgb, RGBColor):
+                                new_run.font.fill.fore_color.rgb = run.font.fill.fore_color.rgb
+                            else: 
+                                # Attempt to convert to RGBColor if not already
+                                # This handles cases where color might be a theme color or other type
+                                rgb_tuple = run.font.fill.fore_color.rgb # Assuming it might be a tuple (R, G, B)
+                                new_run.font.fill.fore_color.rgb = RGBColor(rgb_tuple[0], rgb_tuple[1], rgb_tuple[2])
+                        except Exception as color_e:
+                            print(f"Warning: Could not copy font color. Error: {color_e}")
+                            pass # If color conversion fails, skip copying the color
+
+            # Copy text frame properties (word wrap, margins)
+            new_text_frame.word_wrap = shape.text_frame.word_wrap
+            new_text_frame.margin_left = shape.text_frame.margin_left
+            new_text_frame.margin_right = shape.text_frame.margin_right
+            new_text_frame.margin_top = shape.text_frame.margin_top
+            new_text_frame.margin_bottom = shape.text_frame.margin_bottom
+
+        else:
+            # For other shapes (e.g., simple geometric shapes, lines, groups, tables, charts),
+            # fall back to deep copying the raw XML element.
+            # This is less robust than using specific python-pptx add_* methods but necessary
+            # for types not directly supported by add_*.
+            # For complex custom shapes, this might still lead to minor issues,
+            # but is the best general approach without parsing deeper XML.
+            new_el = copy.deepcopy(shape.element)
+            dest_slide.shapes._spTree.insert_element_before(new_el, 'p:extLst')
+
+def find_slide_by_ai(api_key, prs, slide_type_prompt, deck_name):
+    """
+    Uses OpenAI to intelligently find the best matching slide and get a justification.
+    Returns a dictionary with the slide object, its index, and the AI's justification.
+    """
+    if not slide_type_prompt: return {"slide": None, "index": -1, "justification": "No keyword provided."}
+    
+    # Check if API key is provided and valid
     if not api_key:
-        st.error("OpenAI API key is required for this feature.")
-        return None
+        return {"slide": None, "index": -1, "justification": "OpenAI API Key is missing."}
 
-    prompt = f"""
-    You are an expert marketing analyst. Your task is to read the following text extracted from a campaign planning presentation and identify all the influencer/creator activations mentioned.
-    For each creator, extract their handle, platform, follower count, and saturation level.
-    For each post by that creator, extract the format, cost, historical reach for that format, historical engagement rate for that format, any paid amplification budget, whether it's new content, and the CTA type.
-    Return the data as a single JSON object with a single key "creators" which is a list of creator objects.
+    client = openai.OpenAI(api_key=api_key)
+    
+    slides_content = []
+    for i, slide in enumerate(prs.slides):
+        slide_text = []
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                slide_text.append(shape.text)
+        # Concatenate all text from the slide, limiting to first 1000 characters to save tokens
+        slides_content.append({"slide_index": i, "text": " ".join(slide_text)[:1000]})
 
-    Here is the text:
-    ---
-    {text}
-    ---
-
-    Respond ONLY with the JSON object. Example format:
-    {{
-      "creators": [
-        {{
-          "handle": "creator_a",
-          "platform": "Instagram",
-          "follower_count": 150000,
-          "saturation": "Medium",
-          "posts": [
-            {{ "format": "Reel", "cost": 2500, "historical_reach_for_format": 80000, "historical_er_for_format": 4.5, "paid_amplification": 500, "is_new_content": true, "cta_type": "Hard CTA" }}
-          ]
-        }}
-      ]
-    }}
+    system_prompt = f"""
+    You are an expert presentation analyst. Your task is to find the best slide in a presentation that matches a user's description.
+    The user is looking for a slide representing: '{slide_type_prompt}'.
+    Analyze the text of each slide to understand its purpose. A "Timeline" slide VISUALLY represents a schedule with dates, quarters, or sequential phases (Phase 1, Phase 2); it is NOT just a list in a table of contents. An "Objectives" slide will contain goal-oriented language. You must prioritize actual content slides over simple divider or table of contents pages.
+    You MUST return a JSON object with two keys: 'best_match_index' (an integer, or -1 if no match) and 'justification' (a brief, one-sentence justification for your choice).
     """
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    payload = {"model": "gpt-4-turbo", "messages": [{"role": "user", "content": prompt}], "response_format": {"type": "json_object"}, "temperature": 0.1}
+    full_user_prompt = f"Find the best slide for '{slide_type_prompt}' in the '{deck_name}' deck with the following contents:\n{json.dumps(slides_content, indent=2)}"
 
     try:
-        api_url = "https://api.openai.com/v1/chat/completions"
-        response = requests.post(api_url, headers=headers, json=payload, timeout=45)
-        response.raise_for_status()
-        return json.loads(response.json()['choices'][0]['message']['content'])
+        response = client.chat.completions.create(
+            model="gpt-4-turbo", 
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": full_user_prompt}],
+            response_format={"type": "json_object"}
+        )
+        result = json.loads(response.choices[0].message.content)
+        best_index = result.get("best_match_index", -1)
+        justification = result.get("justification", "No justification provided.")
+        
+        # Validate the AI's chosen index
+        if best_index != -1 and best_index < len(prs.slides):
+            return {"slide": prs.slides[best_index], "index": best_index, "justification": justification}
+        else:
+            return {"slide": None, "index": -1, "justification": "AI could not find a suitable slide or returned an invalid index."}
+    except openai.APIError as e:
+        return {"slide": None, "index": -1, "justification": f"OpenAI API Error: {e}"}
+    except json.JSONDecodeError as e:
+        return {"slide": None, "index": -1, "justification": f"AI response was not valid JSON: {e}"}
     except Exception as e:
-        st.error(f"AI data extraction failed: {e}")
-        return None
-def calculate_predictions_advanced(creators):
+        return {"slide": None, "index": -1, "justification": f"An unexpected error occurred during AI analysis: {e}"}
+
+def get_slide_content(slide):
+    """Extracts title and body text from a slide."""
+    if not slide: return {"title": "", "body": ""}
+    
+    # Sort text shapes by their top position to infer order (title usually highest)
+    text_shapes = sorted([s for s in slide.shapes if s.has_text_frame and s.text.strip()], key=lambda s: s.top)
+    
+    title = ""
+    body = ""
+    
+    if text_shapes:
+        # Heuristic for title: often the first (top-most) text shape.
+        # Could be improved by checking placeholder type (e.g., MSO_PLACEHOLDER_TYPE.TITLE)
+        title = text_shapes[0].text.strip()
+        body = "\n".join(s.text.strip() for s in text_shapes[1:])
+        
+    return {"title": title, "body": body}
+
+def populate_slide(slide, content):
     """
-    Calculates predicted reach and depth using a multi-factor model that accounts
-    for paid media, content freshness, and creator saturation.
-
-    Args:
-        creators (list): A list of creator dictionaries with post details.
-
-    Returns:
-        tuple: Updated creators list, total reach, total weighted engagement.
+    Populates a slide's placeholders or main text boxes with new content.
+    It clears the existing content and adds new runs, aiming to use existing
+    placeholders without forcing bold.
     """
-    total_predicted_reach = 0
-    total_weighted_engagement = 0
-
-    # --- Model Coefficients (World-Class Nuance) ---
-    reach_weights = {
-        'Instagram': {'Reel': 1.25, 'Story': 0.35, 'Static Post': 0.85, 'Long-form Video': 0.7},
-        'TikTok': {'Reel': 1.6, 'Story': 0.4, 'Static Post': 0.7, 'Long-form Video': 0.9},
-        'YouTube': {'Long-form Video': 0.8, 'Reel': 1.4}
-    }
-    engagement_weights = {
-        'Instagram': {'likes': 1, 'comments': 4, 'shares': 6, 'saves': 5},
-        'TikTok': {'likes': 1, 'comments': 3, 'shares': 5, 'saves': 4},
-        'YouTube': {'likes': 1, 'comments': 5, 'shares': 3}
-    }
-    # Penalty/Bonus coefficients
-    PAID_BOOST_FACTOR = 0.02 # 2% reach boost per $1000 spent
-    FRESHNESS_BONUS = 0.15 # 15% bonus for new content
-    SATURATION_PENALTY = {'Medium': 0.10, 'High': 0.25} # 10-25% penalty
-    CTA_ENGAGEMENT_PENALTY = {'Soft CTA': 0, 'Hard CTA': 0.15} # Hard CTAs reduce organic ER by 15%
-
-    for creator in creators:
-        creator_saturation = creator.get('saturation', 'Low')
-
-        if 'posts' in creator and creator['posts']:
-            for post in creator['posts']:
-                # --- 1. Calculate Predicted Reach ---
-                baseline_reach = post.get('historical_reach_for_format', 0)
-                
-                paid_boost = (post.get('paid_amplification', 0) / 1000) * PAID_BOOST_FACTOR
-                freshness_boost = FRESHNESS_BONUS if post.get('is_new_content', True) else 0
-                saturation_penalty = SATURATION_PENALTY.get(creator_saturation, 0)
-
-                adjustment_factor = 1 + paid_boost + freshness_boost - saturation_penalty
-                predicted_reach = baseline_reach * adjustment_factor
-                post['predicted_reach'] = predicted_reach
-                total_predicted_reach += predicted_reach
-
-                # --- 2. Calculate Weighted Engagement Score (Depth) ---
-                base_er = post.get('historical_er_for_format', 0) / 100.0
-                cta_penalty = CTA_ENGAGEMENT_PENALTY.get(post.get('cta_type', 'Soft CTA'), 0)
-                adjusted_er = base_er * (1 - cta_penalty)
-
-                estimated_interactions = predicted_reach * adjusted_er
-                
-                likes = estimated_interactions * 0.75
-                comments = estimated_interactions * 0.15
-                shares = estimated_interactions * 0.05
-                saves = estimated_interactions * 0.05
-                
-                platform_eng_weights = engagement_weights.get(creator.get('platform', 'Instagram'), {})
-                weighted_score = (
-                    likes * platform_eng_weights.get('likes', 1) +
-                    comments * platform_eng_weights.get('comments', 1) +
-                    shares * platform_eng_weights.get('shares', 1) +
-                    saves * platform_eng_weights.get('saves', 1)
-                )
-                post['weighted_engagement_score'] = weighted_score
-                total_weighted_engagement += weighted_score
-
-    return creators, total_predicted_reach, total_weighted_engagement
-
-# ================================================================================
-# 1) App State Initialization
-# ================================================================================
-st.set_page_config(page_title="Event Marketing Scorecard", layout="wide")
-
-APP_VERSION = "8.0.0" # Final Integrated Version
-
-if 'app_version' not in st.session_state or st.session_state.app_version != APP_VERSION:
-    api_key = st.session_state.get('openai_api_key')
-    for key in list(st.session_state.keys()): del st.session_state[key]
+    title_populated, body_populated = False, False
     
-    st.session_state.app_version = APP_VERSION
-    st.session_state.api_key_entered = True if api_key else False
-    st.session_state.openai_api_key = api_key
-    st.session_state.metrics_confirmed = False
-    st.session_state.comparison_profile_complete = False
-    st.session_state.benchmark_flow_complete = False
-    st.session_state.scorecard_ready = False
-    st.session_state.show_ppt_creator = False
-    st.session_state.metrics = []
-    st.session_state.benchmark_df = pd.DataFrame()
-    st.session_state.sheets_dict = None
-    st.session_state.presentation_buffer = None
-    st.session_state.proposed_benchmarks = {}
-    st.session_state.avg_actuals = {}
-    st.session_state.saved_moments = {}
-    st.session_state.campaign_profile = {}
-    st.session_state.creators = [{'handle': 'creator_a', 'platform': 'Instagram', 'follower_count': 150000, 'saturation': 'Medium', 'posts': [
-        {'format': 'Reel', 'cost': 2500, 'historical_reach_for_format': 80000, 'historical_er_for_format': 4.5, 'paid_amplification': 500, 'is_new_content': True, 'cta_type': 'Hard CTA'},
-        {'format': 'Story', 'cost': 500, 'historical_reach_for_format': 20000, 'historical_er_for_format': 1.8, 'paid_amplification': 0, 'is_new_content': True, 'cta_type': 'Soft CTA'}
-    ]}]
+    # Iterate through shapes to find suitable places for title and body
+    for shape in slide.shapes:
+        if not shape.has_text_frame:
+            continue
+        
+        # Check if it's a title placeholder (type 1, 2, or object type 8 which can be title)
+        # Or if it's a top-positioned shape likely to be a title
+        is_title_placeholder = (
+            hasattr(shape, 'is_placeholder') and shape.is_placeholder and 
+            shape.placeholder_format.type in (1, 2, 8) # TITLE, CENTER_TITLE, OBJECT
+        )
+        is_top_text_box = (shape.top < Pt(150)) # Heuristic: within 1.5 inches from top
 
+        if not title_populated and (is_title_placeholder or is_top_text_box):
+            tf = shape.text_frame
+            tf.clear() # Clear existing content
+            p = tf.add_paragraph()
+            run = p.add_run()
+            run.text = content.get("title", "")
+            # No longer forcing bold here. The template's default formatting will apply.
+            title_populated = True
+            
+        # Check for body placeholders (type 3, 4, 8, 14) or large text boxes with dummy text
+        is_body_placeholder = (
+            hasattr(shape, 'is_placeholder') and shape.is_placeholder and 
+            shape.placeholder_format.type in (3, 4, 8, 14) # BODY, OBJECT, CONTENT_TITLE_BODY
+        )
+        is_lorem_ipsum = "lorem ipsum" in shape.text.lower()
+        is_empty_text_box = not shape.text.strip() and shape.height > Pt(100) # Heuristic for larger empty text boxes
 
-st.title("Event Marketing Scorecard & Presentation Generator")
-render_sidebar()
+        if not body_populated and (is_body_placeholder or is_lorem_ipsum or is_empty_text_box):
+            tf = shape.text_frame
+            tf.clear() # Clear existing content
+            p = tf.add_paragraph()
+            run = p.add_run()
+            run.text = content.get("body", "")
+            # No longer forcing bold here.
+            body_populated = True
 
-# ================================================================================
-# Step 0: API Key Entry
-# ================================================================================
-if not st.session_state.api_key_entered:
-    st.header("Step 0: Enter Your OpenAI API Key")
-    with st.form("api_key_form"):
-        api_key_input = st.text_input("🔑 OpenAI API Key", type="password")
-        if st.form_submit_button("Submit API Key"):
-            if api_key_input:
-                st.session_state.openai_api_key = api_key_input
-                st.session_state.api_key_entered = True
-                st.rerun()
-            else:
-                st.error("Please enter a valid OpenAI API key.")
+        if title_populated and body_populated:
+            break # Exit loop once both title and body content are placed
 
-# ================================================================================
-# Step 1: Metric Selection
-# ================================================================================
-elif not st.session_state.metrics_confirmed:
-    st.header("Step 1: Select Your Core Scorecard Metrics (RDA)")
-    st.info("Select metrics from the dropdown, or add your own below. Press Enter to add a custom metric.")
-    
-    predefined_metrics = [
-        "Video views (Franchise)", "Social Impressions", "Press UMV (unique monthly views)",
-        "Social Conversation Volume", "Views trailer", "UGC Views", 
-        "Social Impressions-Posts with trailer (FB, IG, X)", "Social Impressions-All posts",
-        "Nb. press articles", "Social Sentiment (Franchise)", "Trailer avg % viewed (Youtube)",
-        "Email Open Rate (OR)", "Email Click Through Rate (CTR)", "Labs program sign-ups",
-        "Discord channel sign-ups", "% Trailer views from Discord (Youtube)",
-        "Labs sign up click-through Web", "Sessions", "DAU", "Hours Watched (Streams)"
-    ]
+# --- Streamlit App ---
+st.set_page_config(page_title="Dynamic AI Presentation Assembler", layout="wide")
+st.title("📊 Dynamic AI Presentation Assembler") # Updated emoji for presentation
 
-    if 'current_metrics' not in st.session_state:
-        st.session_state.current_metrics = ["Video views (Franchise)", "Social Impressions"]
-
-    all_possible_metrics = sorted(list(set(predefined_metrics + st.session_state.current_metrics)))
-
-    def update_selections():
-        st.session_state.current_metrics = st.session_state.multiselect_key
-
-    st.multiselect(
-        "Select metrics:", 
-        options=all_possible_metrics, 
-        default=st.session_state.current_metrics,
-        key="multiselect_key",
-        on_change=update_selections
-    )
-    
-    def add_custom_metric():
-        custom_metric = st.session_state.custom_metric_input.strip()
-        if custom_metric and custom_metric not in st.session_state.current_metrics:
-            st.session_state.current_metrics.append(custom_metric)
-        st.session_state.custom_metric_input = ""
-
-    st.text_input(
-        "✍️ Add Custom Metric (and press Enter)", 
-        key="custom_metric_input", 
-        on_change=add_custom_metric
-    )
-
+with st.sidebar:
+    st.header("1. API Key & Decks")
+    api_key = st.text_input("OpenAI API Key", type="password")
     st.markdown("---")
+    st.header("2. Upload Decks")
+    template_files = st.file_uploader("Upload Template Deck(s)", type=["pptx"], accept_multiple_files=True)
+    gtm_file = st.file_uploader("Upload GTM Global Deck", type=["pptx"])
+    st.markdown("---")
+    st.header("3. Define Presentation Structure")
+    
+    # Initialize session state for structure if not present
+    if 'structure' not in st.session_state: 
+        st.session_state.structure = []
+    
+    # Button to add a new step to the presentation structure
+    if st.button("Add New Step", use_container_width=True):
+        st.session_state.structure.append({"id": str(uuid.uuid4()), "keyword": "", "action": "Copy from GTM (as is)"})
 
-    if st.button("Confirm Metrics & Proceed →", type="primary"):
-        if not st.session_state.current_metrics:
-            st.error("Please select at least one metric.")
-        else:
-            st.session_state.metrics = st.session_state.current_metrics
-            st.session_state.metrics_confirmed = True
-            st.rerun()
+    # Display and manage each step in the structure
+    for i, step in enumerate(st.session_state.structure):
+        with st.container(border=True): # Use a container for visual separation
+            cols = st.columns([3, 3, 1]) # Three columns for keyword, action, and delete button
+            # Text input for the slide type keyword
+            step["keyword"] = cols[0].text_input("Slide Type", step["keyword"], key=f"keyword_{step['id']}")
+            # Selectbox for the action to perform (Copy or Merge)
+            step["action"] = cols[1].selectbox(
+                "Action", 
+                ["Copy from GTM (as is)", "Merge: Template Layout + GTM Content"], 
+                index=["Copy from GTM (as is)", "Merge: Template Layout + GTM Content"].index(step["action"]), 
+                key=f"action_{step['id']}"
+            )
+            # Delete button for each step
+            if cols[2].button("🗑️", key=f"del_{step['id']}"): # Changed emoji for delete
+                st.session_state.structure.pop(i) # Remove the step
+                st.rerun() # Rerun to update the UI immediately
 
-# ================================================================================
-# NEW ADVANCED Step 2: Define Campaign Profile for Comparison
-# ================================================================================
-elif not st.session_state.comparison_profile_complete:
-    st.header("Step 2: Define Campaign Profile for Comparison")
+    # Button to clear all defined steps
+    if st.button("Clear Structure", use_container_width=True): 
+        st.session_state.structure = []
+        st.rerun()
 
-    # --- NEW: AI-Powered Auto-Population Section ---
-    with st.expander("🚀 Auto-Populate from Presentation"):
-        st.info("Upload a .pptx file containing your campaign plan. The AI will attempt to extract creator details and populate the form below.")
-        uploaded_file = st.file_uploader("Choose a PowerPoint file", type="pptx")
+# --- Main App Logic ---
+# Check if all necessary inputs are provided before enabling assembly
+if template_files and gtm_file and api_key and st.session_state.structure:
+    # Button to trigger the presentation assembly process
+    if st.button("🚀 Assemble Presentation", type="primary"): # Changed emoji for assemble
+        with st.spinner("Assembling your new presentation..."):
+            try:
+                st.write("Step 1/3: Loading decks...")
+                # CRITICAL: Use the first uploaded template file as the base for the new presentation.
+                new_prs = Presentation(io.BytesIO(template_files[0].getvalue()))
+                gtm_prs = Presentation(io.BytesIO(gtm_file.getvalue()))
+                
+                process_log = [] # To store logs of what happened during assembly
+                st.write("Step 2/3: Building new presentation based on your structure...")
+                
+                num_template_slides = len(new_prs.slides)
+                num_structure_steps = len(st.session_state.structure)
 
-        if st.button("Analyze Presentation and Populate Form"):
-            if uploaded_file is not None and st.session_state.openai_api_key:
-                with st.spinner("Reading presentation and contacting OpenAI..."):
-                    extracted_text = extract_text_from_ppt(uploaded_file)
-                    if extracted_text:
-                        ai_data = get_creator_data_from_text(extracted_text, st.session_state.openai_api_key)
-                        if ai_data and "creators" in ai_data:
-                            st.session_state.creators = ai_data["creators"]
-                            st.success("Successfully populated creator data from presentation!")
-                            st.rerun()
+                # Prune excess slides from the template if the defined structure is shorter
+                if num_structure_steps < num_template_slides:
+                    # Iterate backwards to safely delete slides
+                    for i in range(num_template_slides - 1, num_structure_steps - 1, -1):
+                        rId = new_prs.slides._sldIdLst[i].rId # Get relationship ID
+                        new_prs.part.drop_rel(rId) # Drop relationship
+                        del new_prs.slides._sldIdLst[i] # Delete slide from slide list
+                    st.info(f"Removed {num_template_slides - num_structure_steps} unused slides from the template.")
+                elif num_structure_steps > num_template_slides:
+                     st.warning(f"Warning: Your defined structure has more steps ({num_structure_steps}) than the template has slides ({num_template_slides}). Extra steps will be ignored.")
+
+                # Process slides based on the defined structure
+                for i, step in enumerate(st.session_state.structure):
+                    # Ensure we don't go out of bounds if the template was trimmed or structure is longer
+                    if i >= len(new_prs.slides): 
+                        break
+
+                    dest_slide = new_prs.slides[i] # Get the current destination slide from the new presentation
+                    keyword, action = step["keyword"], step["action"]
+                    log_entry = {"step": i + 1, "keyword": keyword, "action": action, "log": []}
+                    
+                    if action == "Copy from GTM (as is)":
+                        # Find the best matching slide in the GTM deck using AI
+                        result = find_slide_by_ai(api_key, gtm_prs, keyword, "GTM Deck")
+                        log_entry["log"].append(f"**GTM Content Choice Justification:** {result['justification']}")
+                        if result["slide"]:
+                            # If a suitable slide is found, deep copy its content to the destination slide
+                            deep_copy_slide_content(dest_slide, result["slide"])
+                            log_entry["log"].append(f"**Action:** Replaced Template slide {i + 1} with content from GTM slide {result['index'] + 1}.")
                         else:
-                            st.error("AI could not extract valid creator data. Please check the presentation content or enter details manually.")
-            else:
-                st.warning("Please upload a file and ensure your OpenAI API key is entered.")
+                            log_entry["log"].append("**Action:** No suitable slide found in GTM deck. Template slide was left as is.")
+                    
+                    elif action == "Merge: Template Layout + GTM Content":
+                        # Find the best matching slide for content in the GTM deck using AI
+                        content_result = find_slide_by_ai(api_key, gtm_prs, keyword, "GTM Deck")
+                        log_entry["log"].append(f"**GTM Content Choice Justification:** {content_result['justification']}")
+                        if content_result["slide"]:
+                            # If content slide found, extract its title and body
+                            content = get_slide_content(content_result["slide"])
+                            # Populate the destination slide (template layout) with the extracted content
+                            populate_slide(dest_slide, content)
+                            log_entry["log"].append(f"**Action:** Merged content from GTM slide {content_result['index'] + 1} into Template slide {i+1}.")
+                        else:
+                             log_entry["log"].append("**Action:** No suitable content found in GTM deck. Template slide was left as is.")
+                    
+                    process_log.append(log_entry) # Add step log to overall process log
+ 
+                st.success("Successfully built the new presentation structure.")
+                
+                st.write("Step 3/3: Finalizing...")
+                st.subheader("📋 Process Log") # Changed emoji for process log
+                # Display the process log in an expandable format
+                for entry in process_log:
+                    with st.expander(f"Step {entry['step']}: '{entry['keyword']}' ({entry['action']})"):
+                        for line in entry['log']: 
+                            st.markdown(f"- {line}")
+                
+                # Save the assembled presentation to an in-memory buffer
+                output_buffer = io.BytesIO()
+                new_prs.save(output_buffer)
+                output_buffer.seek(0) # Rewind the buffer to the beginning for downloading
 
-    with st.form("campaign_profile_form"):
-        st.subheader("Core Campaign Details")
-        campaign_name = st.text_input("Campaign Name", "Q4 Product Launch")
-        total_budget = st.number_input("Total Budget ($)", min_value=1, format="%d", value=250000)
-
-        st.markdown("---")
-        st.subheader("Live Predictive Summary")
-        # This function needs to be defined at the top of your file
-        _, total_reach, total_engagement = calculate_predictions_advanced(st.session_state.creators)
-        total_creator_cost = sum(post.get('cost', 0) for creator in st.session_state.creators for post in creator.get('posts', []))
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Defined Cost", f"${total_creator_cost:,.0f}")
-        c2.metric("Total Predicted Reach", f"{total_reach:,.0f}")
-        c3.metric("Total Weighted Engagement Score", f"{total_engagement:,.0f}")
-
-        submitted = st.form_submit_button("Save Profile & Proceed to Benchmarking →", type="primary")
-        if submitted:
-            final_creators, total_reach, total_engagement = calculate_predictions_advanced(st.session_state.creators)
-            st.session_state.campaign_profile = {
-                "CoreDetails": {"CampaignName": campaign_name, "TotalBudget": total_budget},
-                "InfluencerStrategy": {"CreatorList": final_creators, "TotalPredictedReach": total_reach, "TotalWeightedEngagement": total_engagement}
-            }
-            st.session_state.comparison_profile_complete = True
-            st.rerun()
-
-    # --- UI for managing creators and posts (OUTSIDE the form) ---
-    st.markdown("---")
-    st.subheader("Define Creator Activations")
-    for i, creator in enumerate(st.session_state.creators):
-        with st.expander(f"Creator {i+1}: {creator.get('handle', 'New Creator')}", expanded=True):
-            creator['handle'] = st.text_input("Handle", value=creator.get('handle', ''), key=f"handle_{i}")
-            c1, c2, c3 = st.columns(3)
-            creator['platform'] = c1.selectbox("Platform", ["Instagram", "TikTok", "YouTube"], index=["Instagram", "TikTok", "YouTube"].index(creator.get('platform', 'Instagram')), key=f"platform_{i}")
-            creator['follower_count'] = c2.number_input("Followers", min_value=0, value=creator.get('follower_count',0), format="%d", key=f"followers_{i}")
-            creator['saturation'] = c3.selectbox("Creator Saturation", ["Low", "Medium", "High"], index=["Low", "Medium", "High"].index(creator.get('saturation', 'Low')), help="How frequently does this creator post sponsored content?", key=f"saturation_{i}")
-
-            st.markdown("**Creator Posts:**")
-            for j, post in enumerate(creator.get('posts', [])):
-                st.markdown(f"**Post {j+1}**")
-                p1, p2, p3 = st.columns(3)
-                post['format'] = p1.selectbox("Format", ['Reel', 'Story', 'Static Post', 'Long-form Video'], index=['Reel', 'Story', 'Static Post', 'Long-form Video'].index(post.get('format', 'Reel')), key=f"post_format_{i}_{j}")
-                post['cost'] = p2.number_input("Cost ($)", min_value=0, value=post.get('cost',0), format="%d", key=f"post_cost_{i}_{j}")
-                post['paid_amplification'] = p3.number_input("Paid Amplification ($)", min_value=0, value=post.get('paid_amplification',0), format="%d", key=f"paid_{i}_{j}")
-
-                p4, p5, p6 = st.columns(3)
-                post['historical_reach_for_format'] = p4.number_input("Historical Reach for this Format", min_value=0, value=post.get('historical_reach_for_format',0), format="%d", key=f"post_hist_reach_{i}_{j}")
-                post['historical_er_for_format'] = p5.number_input("Historical ER for this Format (%)", value=post.get('historical_er_for_format',0.0), format="%.2f", key=f"post_hist_er_{i}_{j}")
-                post['cta_type'] = p6.selectbox("CTA Type", ["Soft CTA", "Hard CTA"], index=["Soft CTA", "Hard CTA"].index(post.get('cta_type', 'Soft CTA')), help="A 'Hard CTA' may slightly lower organic engagement.", key=f"cta_{i}_{j}")
-
-                post['is_new_content'] = st.toggle("First-Use Content", value=post.get('is_new_content', True), key=f"new_{i}_{j}")
-
-                st.markdown("---")
-                temp_data = {'saturation': creator['saturation'], 'posts': [post], 'platform': creator['platform']}
-                _, post_reach, post_wes = calculate_predictions_advanced([temp_data])
-                pr1, pr2 = st.columns(2)
-                pr1.metric("Predicted Post Reach", f"{post_reach:,.0f}")
-                pr2.metric("Predicted Post Depth (WES)", f"{post_wes:,.0f}")
-
-                if st.button("Remove Post", key=f"remove_post_{i}_{j}"):
-                    st.session_state.creators[i]['posts'].pop(j)
-                    st.rerun()
-
-            if st.button("Add Post", key=f"add_post_{i}"):
-                if 'posts' not in st.session_state.creators[i]: st.session_state.creators[i]['posts'] = []
-                st.session_state.creators[i]['posts'].append({})
-                st.rerun()
-
-    st.markdown("---")
-    c1, c2 = st.columns(2)
-    if c1.button("Add Creator"): st.session_state.creators.append({}); st.rerun()
-    if c2.button("Remove Last Creator"): 
-        if st.session_state.creators: st.session_state.creators.pop(); st.rerun()
-
-# ================================================================================
-# Step 3: Original Benchmark Calculation (Now with predictive context)
-# ================================================================================
-elif not st.session_state.benchmark_flow_complete:
-    st.header("Step 3: Benchmark Calculation")
-    
-    st.info("The predictive benchmarks for your influencer activity have been calculated. You can use this section to add benchmarks for any other, non-influencer metrics.")
-    
-    with st.expander("View Predictive Benchmarks from Step 2"):
-        st.json(st.session_state.campaign_profile.get("InfluencerStrategy", {}))
-
-    benchmark_choice = st.radio(
-        "Would you like to calculate other benchmark values using historical data?",
-        ("No, I will proceed with the predictive benchmarks.", "Yes, calculate additional benchmarks."),
-        key="benchmark_choice_radio"
-    )
-
-    if benchmark_choice == "Yes, calculate additional benchmarks.":
-        with st.form("benchmark_data_form"):
-            # Filter metrics to only show those not covered by predictions
-            other_metrics = [m for m in st.session_state.metrics if "Reach" not in m and "WES" not in m]
-            if not other_metrics:
-                st.warning("No other metrics to benchmark.")
-            else:
-                historical_inputs = {}
-                for metric in other_metrics:
-                    st.markdown(f"--- \n #### Data for: **{metric}**")
-                    three_month_avg = st.number_input(f"3-Month Average (Baseline Method) for '{metric}'", min_value=0.0, format="%.2f", key=f"3m_avg_{metric}")
-                    df_template = pd.DataFrame([{"Event Name": "Past Event 1", "Baseline (7-day)": None, "Actual (7-day)": None}])
-                    edited_df = st.data_editor(df_template, key=f"hist_editor_{metric}", num_rows="dynamic", use_container_width=True)
-                    historical_inputs[metric] = {"historical_df": edited_df, "three_month_avg": three_month_avg}
-
-                if st.form_submit_button("Calculate Benchmarks & Proceed →", type="primary"):
-                    with st.spinner("Analyzing historical data..."):
-                        summary_df, proposed_benchmarks, avg_actuals = calculate_all_benchmarks(historical_inputs)
-                        st.session_state.benchmark_df = summary_df
-                        # Add these to any existing benchmarks
-                        if 'proposed_benchmarks' not in st.session_state: st.session_state.proposed_benchmarks = {}
-                        st.session_state.proposed_benchmarks.update(proposed_benchmarks)
-                        st.session_state.benchmark_flow_complete = True
-                    st.rerun()
-    else:
-        if st.button("Proceed to Scorecard Creation →", type="primary"):
-            st.session_state.benchmark_flow_complete = True
-            st.rerun()
-
-# ================================================================================
-# Step 4 & 5 - Main App Logic (Original)
-# ================================================================================
+                st.success("✨ Your new regional presentation has been assembled!") # Changed emoji for success
+                # Provide a download button for the user
+                st.download_button(
+                    "Download Assembled PowerPoint", 
+                    data=output_buffer, 
+                    file_name="Dynamic_AI_Assembled_Deck.pptx",
+                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                )
+            except Exception as e:
+                st.error(f"A critical error occurred: {e}")
+                st.exception(e) # Display full traceback for debugging
 else:
-    app_config = {
-        'openai_api_key': st.session_state.openai_api_key, 
-        'metrics': st.session_state.metrics,
-        'proposed_benchmarks': st.session_state.get('proposed_benchmarks'),
-        'avg_actuals': st.session_state.get('avg_actuals')
-    }
-    
-    # Pre-populate benchmarks from the predictive step
-    if st.session_state.campaign_profile:
-        if 'proposed_benchmarks' not in st.session_state: st.session_state.proposed_benchmarks = {}
-        st.session_state.proposed_benchmarks['Total Predicted Reach'] = st.session_state.campaign_profile['InfluencerStrategy']['TotalPredictedReach']
-        st.session_state.proposed_benchmarks['Total Weighted Engagement Score'] = st.session_state.campaign_profile['InfluencerStrategy']['TotalWeightedEngagement']
-        # Add these metrics to the list if they aren't there
-        if 'Total Predicted Reach' not in st.session_state.metrics: st.session_state.metrics.append('Total Predicted Reach')
-        if 'Total Weighted Engagement Score' not in st.session_state.metrics: st.session_state.metrics.append('Total Weighted Engagement Score')
-
-
-    st.header("Step 4: Build & Save Scorecard Moments")
-    if 'sheets_dict' not in st.session_state or st.session_state.sheets_dict is None:
-        st.session_state.sheets_dict = process_scorecard_data(app_config)
-
-    st.info("Your benchmarks have been pre-populated from the predictive model. Fill in the 'Actuals' columns, give the scorecard a name, and save it as a 'moment'.")
-    current_scorecard_df = next(iter(st.session_state.sheets_dict.values()), None)
-
-    if current_scorecard_df is not None:
-        edited_df = st.data_editor(current_scorecard_df, key="moment_editor", use_container_width=True, num_rows="dynamic")
-        if 'Benchmark' in edited_df.columns and edited_df['Benchmark'].notna().any():
-            edited_df['% Difference'] = ((pd.to_numeric(edited_df['Actuals'], errors='coerce') - pd.to_numeric(edited_df['Benchmark'], errors='coerce')) / pd.to_numeric(edited_df['Benchmark'], errors='coerce').replace(0, pd.NA)).apply(lambda x: f"{x:.1%}" if pd.notna(x) else None)
-        else:
-            edited_df['% Difference'] = None
-        col1, col2 = st.columns([3, 1])
-        moment_name = col1.text_input("Name for this Scorecard Moment", placeholder="e.g., Pre-Reveal, Launch Week")
-        if col2.button("💾 Save Moment", use_container_width=True, type="primary"):
-            if moment_name:
-                st.session_state.saved_moments[moment_name] = edited_df
-                st.success(f"Saved moment: '{moment_name}'")
-                st.session_state.sheets_dict = None
-                st.rerun()
-            else:
-                st.error("Please enter a name for the moment before saving.")
-
-    if st.session_state.saved_moments:
-        st.markdown("---")
-        st.subheader("Saved Scorecard Moments")
-        if 'benchmark_df' in st.session_state and st.session_state.benchmark_df is not None and not st.session_state.benchmark_df.empty:
-            with st.expander("View Benchmark Calculation Summary"):
-                st.dataframe(st.session_state.benchmark_df.set_index("Metric"), use_container_width=True)
-        for name, df in st.session_state.saved_moments.items():
-            with st.expander(f"View Moment: {name}"):
-                st.dataframe(df, use_container_width=True)
-        st.session_state.show_ppt_creator = True
-
-    if st.session_state.get('show_ppt_creator'):
-        st.markdown("---")
-        st.header("Step 5: Create Presentation")
-        if st.session_state.get("presentation_buffer"):
-            st.download_button(label="✅ Download Your Presentation!", data=st.session_state.presentation_buffer, file_name="game_scorecard_presentation.pptx", use_container_width=True)
-        with st.form("ppt_form"):
-            st.subheader("Presentation Style & Details")
-            if st.session_state.saved_moments:
-                selected_moments = st.multiselect("Select which saved moments to include in the presentation:",
-                    options=list(st.session_state.saved_moments.keys()),
-                    default=list(st.session_state.saved_moments.keys()))
-            else:
-                selected_moments = []
-                st.warning("No scorecard moments saved yet. Please save at least one moment above.")
-            col1, col2 = st.columns(2)
-            selected_style_name = col1.radio("Select Style Preset:", options=list(STYLE_PRESETS.keys()), horizontal=True)
-            image_region_prompt = col2.text_input("Region for AI Background Image", "Brazil")
-            ppt_title = st.text_input("Presentation Title", "Game Scorecard")
-            ppt_subtitle = st.text_input("Presentation Subtitle", "A detailed analysis")
-            submitted = st.form_submit_button("Generate Presentation", use_container_width=True)
-            if submitted:
-                if not selected_moments:
-                    st.error("Please select at least one saved moment to include in the presentation.")
-                else:
-                    with st.spinner(f"Building presentation with {selected_style_name} style..."):
-                        presentation_data = {name: st.session_state.saved_moments[name] for name in selected_moments}
-                        style_guide = STYLE_PRESETS[selected_style_name]
-                        ppt_buffer = create_presentation(
-                            title=ppt_title,
-                            subtitle=ppt_subtitle,
-                            scorecard_moments=selected_moments,
-                            sheets_dict=presentation_data,
-                            style_guide=style_guide,
-                            region_prompt=image_region_prompt,
-                            openai_api_key=st.session_state.openai_api_key 
-                        )
-                        st.session_state["presentation_buffer"] = ppt_buffer
-                        st.rerun()
+    # Instructions displayed when inputs are not yet complete
+    st.info("Please provide an API Key, upload at least one Template Deck and a GTM Deck, and define the structure in the sidebar to begin.")
